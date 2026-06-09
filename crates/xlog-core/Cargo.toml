@@ -1,0 +1,50 @@
+[package]
+name = "mars-xlog-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Core runtime building blocks for the Rust-native xlog engine."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/mars-xlog-core"
+keywords = ["logging", "xlog", "compression", "crypto", "mmap"]
+categories = ["development-tools::debugging"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+libc = { workspace = true }
+thiserror = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+flate2 = "1"
+zstd = "0.13"
+k256 = { version = "0.13", features = ["ecdh"] }
+rand_core = "0.6"
+hex = "0.4"
+memmap2 = "0.9"
+fs2 = "0.4"
+crossbeam-channel = "0.5"
+metrics = { version = "0.22", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+hex = "0.4"
+tempfile = "3"
+filetime = "0.2"
+
+[[bench]]
+name = "criterion_components"
+harness = false
+
+[build-dependencies]
+cc = "1"
+
+[package.metadata.docs.rs]
+no-default-features = false
+
+[features]
+metrics = ["dep:metrics"]

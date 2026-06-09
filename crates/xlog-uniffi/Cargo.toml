@@ -1,0 +1,21 @@
+[package]
+name = "mars-xlog-uniffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["rust-backend"]
+rust-backend = ["mars-xlog/rust-backend"]
+
+[dependencies]
+mars-xlog = { path = "../xlog", version = "0.1.0", default-features = false, features = ["tracing"] }
+thiserror = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+# Keep UniFFI exactly aligned with dev.gobley.uniffi 0.3.7 (gobley-uniffi-bindgen uses 0.29.4).
+uniffi = { version = "=0.29.4" }
