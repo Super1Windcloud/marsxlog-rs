@@ -28,3 +28,16 @@ fn zstd_frames_roundtrip() {
     let plain = decompress_zstd_frames(&out).unwrap();
     assert_eq!(plain, b"mars xlog");
 }
+
+#[test]
+fn zlib_stream_chunk_without_final_flush_roundtrip() {
+    let mut compressor = ZlibStreamCompressor::default();
+    let mut out = Vec::new();
+    // Only compress_chunk with sync flush, never call compressor.flush() to finish stream
+    compressor
+        .compress_chunk(b"mars xlog sync flushed chunk", &mut out)
+        .unwrap();
+
+    let plain = decompress_raw_zlib(&out).unwrap();
+    assert_eq!(plain, b"mars xlog sync flushed chunk");
+}

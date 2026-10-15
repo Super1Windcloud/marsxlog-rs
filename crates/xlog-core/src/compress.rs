@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 
-use flate2::Compression;
+use flate2::{Compression, Decompress, FlushDecompress, Status};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -157,12 +157,43 @@ fn drain_encoded_bytes(encoded: &mut Vec<u8>, output: &mut Vec<u8>) {
 }
 
 /// Decompresses raw-deflate data produced by the zlib stream compressor.
+///
+/// Mars xlog flushes async chunks using `Z_SYNC_FLUSH` without writing a final
+/// stream termination marker (`Z_FINISH`). Decompressing via streaming state machine
+/// ensures compatibility with flushed-but-not-ended deflate chunks across flate2/miniz versions.
 pub fn decompress_raw_zlib(input: &[u8]) -> Result<Vec<u8>, CompressError> {
-    let mut decoder = flate2::read::DeflateDecoder::new(input);
-    let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| CompressError::ZlibDecompress(e.to_string()))?;
+    if input.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut decompressor = Decompress::new(false);
+    let mut out = Vec::with_capacity(input.len().saturating_mul(2).max(1024));
+    let mut input_offset = 0;
+
+    while input_offset < input.len() {
+        if out.capacity() == out.len() {
+            out.reserve(out.len().max(4096));
+        }
+        let in_before = decompressor.total_in();
+        let out_before = decompressor.total_out();
+
+        let status = decompressor
+            .decompress_vec(&input[input_offset..], &mut out, FlushDecompress::Sync)
+            .map_err(|e| CompressError::ZlibDecompress(e.to_string()))?;
+
+        let consumed = (decompressor.total_in() - in_before) as usize;
+        let written = (decompressor.total_out() - out_before) as usize;
+        input_offset += consumed;
+
+        if status == Status::StreamEnd {
+            break;
+        }
+
+        if consumed == 0 && written == 0 {
+            break;
+        }
+    }
+
     Ok(out)
 }
 
