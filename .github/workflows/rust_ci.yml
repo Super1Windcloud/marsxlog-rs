@@ -54,7 +54,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: stable
           components: rustfmt
 
       - name: Cache cargo artifacts
@@ -73,7 +73,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: stable
           components: clippy
 
       - name: Cache cargo artifacts
@@ -106,7 +106,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: stable
 
       - name: Cache cargo artifacts
         uses: swatinem/rust-cache@v2
@@ -132,7 +132,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: stable
 
       - name: Cache cargo artifacts
         uses: swatinem/rust-cache@v2
@@ -172,7 +172,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: stable
 
       - name: Cache cargo artifacts
         uses: swatinem/rust-cache@v2

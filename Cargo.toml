@@ -22,9 +22,8 @@ default-members = [
 edition = "2021"
 license = "MIT"
 authors = ["xlog-rs contributors"]
-homepage = "https://github.com/fannnzhang/xlog-rs"
-repository = "https://github.com/fannnzhang/xlog-rs"
-rust-version = "1.85"
+homepage = "https://github.com/Super1Windcloud/marsxlog-rs"
+repository = "https://github.com/Super1Windcloud/marsxlog-rs"
 
 [workspace.dependencies]
 libc = "0.2"

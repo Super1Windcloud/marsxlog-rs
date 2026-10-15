@@ -7,7 +7,6 @@ description = "Core runtime building blocks for the Rust-native xlog engine."
 homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
-rust-version.workspace = true
 readme = "README.md"
 documentation = "https://docs.rs/mars-xlog-core"
 keywords = ["logging", "xlog", "compression", "crypto", "mmap"]
