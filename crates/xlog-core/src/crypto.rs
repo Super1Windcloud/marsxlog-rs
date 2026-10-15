@@ -189,6 +189,7 @@ fn decode_uncompressed_pubkey(server_pubkey_hex: &str) -> Result<PublicKey, Cryp
 }
 
 /// Encrypts data in-place with the TEA block cipher using 16 rounds.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn tea_encrypt_in_place(data: &mut [u8], key: &[u32; 4]) {
     for chunk in data.chunks_exact_mut(TEA_BLOCK_LEN) {
         let mut v0 = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -216,6 +217,7 @@ pub fn tea_encrypt_in_place(data: &mut [u8], key: &[u32; 4]) {
 }
 
 /// Decrypts data in-place with the TEA block cipher using 16 rounds.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn tea_decrypt_in_place(data: &mut [u8], key: &[u32; 4]) {
     for chunk in data.chunks_exact_mut(TEA_BLOCK_LEN) {
         let mut v0 = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);

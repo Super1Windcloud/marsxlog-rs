@@ -3,7 +3,6 @@ name = "xlog_dart_native"
 version = "0.1.0"
 edition = "2021"
 publish = false
-rust-version = "1.92"
 
 [lib]
 crate-type = ["staticlib", "cdylib"]

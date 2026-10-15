@@ -29,7 +29,7 @@ This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The
 - The Flutter side is pinned through `fvm` in [`packages/xlog/.fvmrc`](./packages/xlog/.fvmrc).
 
 ## Build notes
-- Published Rust crates currently target Rust 1.85 or newer.
+- Published Rust crates target standard stable Rust toolchain (no hardcoded version required).
 - Default workspace build (`cargo build`) uses the Rust backend and does not require C++14/Boost toolchains.
 - `mars-xlog-sys` is excluded from workspace `default-members`; build it explicitly when needed:
   - `cargo build -p mars-xlog-sys`

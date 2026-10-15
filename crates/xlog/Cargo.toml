@@ -7,7 +7,6 @@ description = "Pure Rust xlog library with async/sync appenders, compression, en
 homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
-rust-version.workspace = true
 readme = "README.md"
 documentation = "https://docs.rs/mars-xlog"
 keywords = ["logging", "xlog", "tracing", "mobile", "rust"]
