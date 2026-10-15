@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey;
-use mars_xlog_core::decoder::{decode_xlog, DecodeOptions};
 use rand_core::OsRng;
 use thiserror::Error;
+
+pub mod core;
+pub use crate::core::decoder::{decode_xlog, parse_private_key_hex, DecodeError, DecodeOptions, DecodeSummary};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -104,7 +106,7 @@ pub enum CliError {
     #[error("ZIP error: {0}")]
     Zip(String),
     #[error(transparent)]
-    Decode(#[from] mars_xlog_core::decoder::DecodeError),
+    Decode(#[from] DecodeError),
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -462,8 +464,8 @@ fn print_key_pair() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mars_xlog_core::compress::{StreamCompressor, ZlibStreamCompressor};
-    use mars_xlog_core::protocol::{select_magic, AppendMode, CompressionKind, LogHeader};
+    use crate::core::compress::{StreamCompressor, ZlibStreamCompressor};
+    use crate::core::protocol::{select_magic, AppendMode, CompressionKind, LogHeader};
     use std::io::Write;
     use tempfile::tempdir;
 

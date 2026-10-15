@@ -2566,14 +2566,15 @@ name = "xlog-decoder"
 version = "0.1.2"
 dependencies = [
  "clap",
+ "flate2",
  "hex",
  "k256",
- "mars-xlog-core",
  "rand_core",
  "tempfile",
  "thiserror 1.0.69",
  "walkdir",
  "zip",
+ "zstd",
 ]
 
 [[package]]

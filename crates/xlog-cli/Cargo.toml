@@ -25,7 +25,8 @@ name = "mars-xlog"
 path = "src/bin/mars-xlog.rs"
 
 [dependencies]
-mars-xlog-core = { path = "../xlog-core", version = "0.1.2" }
+flate2 = "1"
+zstd = "0.13"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = { workspace = true }
 hex = "0.4"
