@@ -1,12 +1,12 @@
 {
   "name": "mars-xlog-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Command-line decoder for Tencent Mars xlog files.",
   "license": "MIT",
-  "homepage": "https://github.com/peterich-rs/xlog-rs#readme",
+  "homepage": "https://github.com/Super1Windcloud/marsxlog-rs#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/peterich-rs/xlog-rs.git"
+    "url": "git+https://github.com/Super1Windcloud/marsxlog-rs.git"
   },
   "bin": {
     "mars-xlog": "bin/mars-xlog.js"
