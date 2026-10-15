@@ -51,13 +51,16 @@ if [[ -z "$version" || -z "$target" ]]; then
 fi
 
 bin_name="mars-xlog"
+cli_bin_name="xlog-decoder"
 if [[ "$target" == *windows* || "$target" == *msvc* ]]; then
   bin_name="mars-xlog.exe"
+  cli_bin_name="xlog-decoder.exe"
 fi
 
 src="${repo_root}/target/${target}/release/${bin_name}"
-if [[ ! -f "$src" ]]; then
-  echo "error: missing built binary: ${src}" >&2
+cli_src="${repo_root}/target/${target}/release/${cli_bin_name}"
+if [[ ! -f "$src" && ! -f "$cli_src" ]]; then
+  echo "error: missing built binary: neither ${src} nor ${cli_src} exists" >&2
   exit 1
 fi
 
@@ -65,11 +68,20 @@ mkdir -p "$out_dir"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-cp "$src" "${tmp_dir}/${bin_name}"
-chmod 0755 "${tmp_dir}/${bin_name}"
+package_bins=()
+if [[ -f "$src" ]]; then
+  cp "$src" "${tmp_dir}/${bin_name}"
+  chmod 0755 "${tmp_dir}/${bin_name}"
+  package_bins+=("$bin_name")
+fi
+if [[ -f "$cli_src" ]]; then
+  cp "$cli_src" "${tmp_dir}/${cli_bin_name}"
+  chmod 0755 "${tmp_dir}/${cli_bin_name}"
+  package_bins+=("$cli_bin_name")
+fi
 
 archive="${out_dir}/mars-xlog-v${version}-${target}.tar.gz"
-tar -czf "$archive" -C "$tmp_dir" "$bin_name"
+tar -czf "$archive" -C "$tmp_dir" "${package_bins[@]}"
 
 if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$archive" > "${archive}.sha256"

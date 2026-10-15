@@ -135,23 +135,23 @@ jobs:
           echo "error: mars-xlog ${version} did not become visible on crates.io" >&2
           exit 1
 
-      - name: Run mars-xlog-cli preflight
+      - name: Run xlog-decoder preflight
         shell: bash
         run: |
           scripts/xlog/check_mars_xlog_cli_release.sh
 
-      - name: Publish mars-xlog-cli when needed
+      - name: Publish xlog-decoder when needed
         id: publish_cli
         shell: bash
         run: |
           set -euo pipefail
           version="${{ steps.meta.outputs.release_version }}"
-          if cargo info "mars-xlog-cli@${version}" --registry crates-io >/dev/null 2>&1; then
+          if cargo info "xlog-decoder@${version}" --registry crates-io >/dev/null 2>&1; then
             echo "action=skipped-existing" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          cargo publish -p mars-xlog-cli --locked
+          cargo publish -p xlog-decoder --locked
           echo "action=published" >> "$GITHUB_OUTPUT"
 
       - name: Upload crate release artifacts

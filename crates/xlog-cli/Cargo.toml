@@ -1,21 +1,29 @@
 [package]
-name = "mars-xlog-cli"
+name = "xlog-decoder"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Command-line decoder for Tencent Mars xlog files."
-homepage.workspace = true
-repository.workspace = true
+description = "Command-line decoder for Tencent Mars xlog files, log directories, and Feedback diagnostic ZIP archives."
+homepage = "https://github.com/Super1Windcloud/marsxlog-rs"
+repository = "https://github.com/Super1Windcloud/marsxlog-rs"
 authors.workspace = true
 rust-version.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/mars-xlog-cli"
+documentation = "https://docs.rs/xlog-decoder"
 keywords = ["logging", "xlog", "decoder", "cli", "mars"]
 categories = ["command-line-utilities", "development-tools::debugging"]
 
+[lib]
+name = "xlog_decoder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xlog-decoder"
+path = "src/bin/xlog-decoder.rs"
+
 [[bin]]
 name = "mars-xlog"
-path = "src/main.rs"
+path = "src/bin/mars-xlog.rs"
 
 [dependencies]
 mars-xlog-core = { path = "../xlog-core", version = "0.1.0" }

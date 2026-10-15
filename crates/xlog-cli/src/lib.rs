@@ -10,7 +10,7 @@ use thiserror::Error;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "mars-xlog",
+    name = "xlog-decoder",
     version,
     about = "Decode Tencent Mars xlog files, log directories, and Feedback diagnostic ZIP packages."
 )]
@@ -23,7 +23,12 @@ struct Cli {
     flag_input: Option<PathBuf>,
 
     /// Output file or target directory (flag).
-    #[arg(short = 'o', long = "output", value_name = "OUTPUT_FLAG", global = true)]
+    #[arg(
+        short = 'o',
+        long = "output",
+        value_name = "OUTPUT_FLAG",
+        global = true
+    )]
     flag_output: Option<PathBuf>,
 
     /// Input .xlog file, directory, or feedback .zip archive.
@@ -35,7 +40,14 @@ struct Cli {
     output: Option<PathBuf>,
 
     /// 64-hex-character private key for encrypted xlog blocks.
-    #[arg(short = 'k', short_alias = 'p', long, alias = "private-key", env = "MARS_XLOG_KEY", global = true)]
+    #[arg(
+        short = 'k',
+        short_alias = 'p',
+        long,
+        alias = "private-key",
+        env = "MARS_XLOG_KEY",
+        global = true
+    )]
     key: Option<String>,
 
     /// Clean (delete) original .xlog files after successful decoding.
@@ -79,7 +91,7 @@ struct DecodeArgs {
 }
 
 #[derive(Debug, Error)]
-enum CliError {
+pub enum CliError {
     #[error("input path does not exist: {0}")]
     InputNotFound(String),
     #[error("input path is required. Run with --help for usage.")]
@@ -95,14 +107,7 @@ enum CliError {
     Decode(#[from] mars_xlog_core::decoder::DecodeError),
 }
 
-fn main() {
-    if let Err(err) = run() {
-        eprintln!("\n❌ Error: {err}");
-        std::process::exit(2);
-    }
-}
-
-fn run() -> Result<(), CliError> {
+pub fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Decode(args)) => {
@@ -112,7 +117,11 @@ fn run() -> Result<(), CliError> {
                 .or(cli.flag_input)
                 .or(cli.input)
                 .ok_or(CliError::MissingInput)?;
-            let output = args.output.or(args.pos_output).or(cli.flag_output).or(cli.output);
+            let output = args
+                .output
+                .or(args.pos_output)
+                .or(cli.flag_output)
+                .or(cli.output);
             let key = args.key.or(cli.key);
             let clean = args.clean || cli.clean;
             process_input(input, output, key, clean)
@@ -149,7 +158,10 @@ fn process_input(
 }
 
 fn is_zip_file(path: &Path) -> bool {
-    if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("zip")) {
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+    {
         return true;
     }
     // Also check magic PK\x03\x04
@@ -172,7 +184,10 @@ fn process_zip(
     let target_dir = match output_dir {
         Some(dir) => dir.to_path_buf(),
         None => {
-            let stem = zip_path.file_stem().and_then(|s| s.to_str()).unwrap_or("feedback");
+            let stem = zip_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("feedback");
             let parent = zip_path.parent().unwrap_or_else(|| Path::new("."));
             parent.join(format!("{}_decoded", stem))
         }
@@ -193,7 +208,9 @@ fn process_zip(
     let mut archive = zip::ZipArchive::new(file).map_err(|e| CliError::Zip(e.to_string()))?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| CliError::Zip(e.to_string()))?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| CliError::Zip(e.to_string()))?;
         let outpath = match file.enclosed_name() {
             Some(path) => target_dir.join(path),
             None => continue,
@@ -225,9 +242,15 @@ fn process_zip(
     }
 
     let mut xlog_files = Vec::new();
-    for entry in walkdir::WalkDir::new(&target_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&target_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file()
-            && entry.path().extension().map_or(false, |ext| ext.eq_ignore_ascii_case("xlog"))
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("xlog"))
         {
             xlog_files.push(entry.into_path());
         }
@@ -269,7 +292,11 @@ fn process_zip(
         }
     }
 
-    println!("\n✨ Completed: {}/{} logs decoded successfully.", success_count, xlog_files.len());
+    println!(
+        "\n✨ Completed: {}/{} logs decoded successfully.",
+        success_count,
+        xlog_files.len()
+    );
     println!("📁 Decoded logs available at: {}\n", target_dir.display());
     Ok(())
 }
@@ -281,9 +308,15 @@ fn process_directory(
     clean: bool,
 ) -> Result<(), CliError> {
     let mut xlog_files = Vec::new();
-    for entry in walkdir::WalkDir::new(dir_path).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(dir_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file()
-            && entry.path().extension().map_or(false, |ext| ext.eq_ignore_ascii_case("xlog"))
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("xlog"))
         {
             xlog_files.push(entry.into_path());
         }
@@ -331,7 +364,11 @@ fn process_directory(
         }
     }
 
-    println!("\n✨ Completed: {}/{} logs decoded successfully.\n", success_count, xlog_files.len());
+    println!(
+        "\n✨ Completed: {}/{} logs decoded successfully.\n",
+        success_count,
+        xlog_files.len()
+    );
     Ok(())
 }
 
@@ -344,7 +381,8 @@ fn process_single_file(
     let output_path = match output {
         Some(out) => {
             if out.is_dir() {
-                out.join(input.file_name().unwrap_or_default()).with_extension("log")
+                out.join(input.file_name().unwrap_or_default())
+                    .with_extension("log")
             } else {
                 out.to_path_buf()
             }
@@ -354,11 +392,7 @@ fn process_single_file(
 
     print!("• {}: ", input.display());
     let bytes = decode_single_xlog(input, &output_path, key)?;
-    println!(
-        "[OK] -> {} ({} bytes)",
-        output_path.display(),
-        bytes
-    );
+    println!("[OK] -> {} ({} bytes)", output_path.display(), bytes);
     if clean {
         let _ = fs::remove_file(input);
     }
@@ -429,9 +463,7 @@ fn print_key_pair() {
 mod tests {
     use super::*;
     use mars_xlog_core::compress::{StreamCompressor, ZlibStreamCompressor};
-    use mars_xlog_core::protocol::{
-        select_magic, AppendMode, CompressionKind, LogHeader,
-    };
+    use mars_xlog_core::protocol::{select_magic, AppendMode, CompressionKind, LogHeader};
     use std::io::Write;
     use tempfile::tempdir;
 
@@ -486,7 +518,10 @@ mod tests {
 
         process_directory(dir.path(), None, None, false).unwrap();
 
-        assert_eq!(fs::read(dir.path().join("root.log")).unwrap(), b"root log\n");
+        assert_eq!(
+            fs::read(dir.path().join("root.log")).unwrap(),
+            b"root log\n"
+        );
         assert_eq!(fs::read(sub.join("child.log")).unwrap(), b"child log\n");
     }
 
@@ -502,11 +537,17 @@ mod tests {
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
 
-        zip_writer.start_file("export_summary.txt", options).unwrap();
-        zip_writer.write_all(b"User ID: 3920\nApp Version: 3.31.0\n").unwrap();
+        zip_writer
+            .start_file("export_summary.txt", options)
+            .unwrap();
+        zip_writer
+            .write_all(b"User ID: 3920\nApp Version: 3.31.0\n")
+            .unwrap();
 
         zip_writer.start_file("main.xlog", options).unwrap();
-        zip_writer.write_all(&make_test_xlog_bytes(b"main process crash log\n")).unwrap();
+        zip_writer
+            .write_all(&make_test_xlog_bytes(b"main process crash log\n"))
+            .unwrap();
 
         zip_writer.finish().unwrap();
 

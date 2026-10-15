@@ -71,7 +71,7 @@ jobs:
       - name: Build CLI binary
         shell: bash
         run: |
-          cargo build --release -p mars-xlog-cli --target "${{ matrix.target }}" --locked
+          cargo build --release -p xlog-decoder --target "${{ matrix.target }}" --locked
 
       - name: Package CLI artifact
         shell: bash
