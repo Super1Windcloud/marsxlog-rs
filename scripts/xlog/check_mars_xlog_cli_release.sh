@@ -60,8 +60,9 @@ mkdir -p "$out_dir/logs"
 summary_file="$out_dir/summary.md"
 status_file="$out_dir/status.txt"
 
-package_list_cmd=(cargo package -p mars-xlog-cli --locked --list)
-publish_dry_run_cmd=(cargo publish --dry-run -p mars-xlog-cli --locked)
+pkg_name="${CLI_PKG_NAME:-xlog-decoder}"
+package_list_cmd=(cargo package -p "$pkg_name" --locked --list)
+publish_dry_run_cmd=(cargo publish --dry-run -p "$pkg_name" --locked)
 if [[ "$allow_dirty" -eq 1 ]]; then
   package_list_cmd+=(--allow-dirty)
   publish_dry_run_cmd+=(--allow-dirty)
@@ -101,7 +102,7 @@ record_blocked_step() {
 core_version="$(cargo pkgid -p mars-xlog-core | sed -E 's/.*#.*@([^ ]+)$/\1/')"
 
 : > "$summary_file"
-echo "# mars-xlog-cli Release Preflight" >> "$summary_file"
+echo "# $pkg_name Release Preflight" >> "$summary_file"
 echo >> "$summary_file"
 echo "- artifact_root: \`$out_dir\`" >> "$summary_file"
 echo "- worktree: \`$(git -C "$repo_root" status --short | wc -l | tr -d ' ')\` changed paths" >> "$summary_file"
@@ -114,9 +115,9 @@ if [[ "$last_exit_code" -eq 0 ]]; then
   cp "$out_dir/logs/package_list.log" "$out_dir/package_list.txt"
 fi
 
-run_step check cargo check -p mars-xlog-cli --locked
+run_step check cargo check -p "$pkg_name" --locked
 if [[ "$skip_tests" -eq 0 ]]; then
-  run_step tests cargo test -p mars-xlog-cli --locked
+  run_step tests cargo test -p "$pkg_name" --locked
 fi
 run_step npm_pack npm pack --dry-run --json "${repo_root}/packages/mars-xlog-cli-npm/"
 

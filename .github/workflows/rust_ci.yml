@@ -80,7 +80,7 @@ jobs:
         uses: swatinem/rust-cache@v2
 
       - name: Run clippy on release-facing crates
-        run: cargo clippy -p mars-xlog-core -p mars-xlog -p mars-xlog-cli --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-targets --all-features --locked -- -D warnings
 
   check:
     runs-on: ubuntu-latest
@@ -97,7 +97,7 @@ jobs:
           - name: xlog-rust-backend-only
             cmd: cargo check -p mars-xlog --all-targets --no-default-features --features rust-backend --locked
           - name: xlog-cli
-            cmd: cargo check -p mars-xlog-cli --all-targets --locked
+            cmd: cargo check -p xlog-decoder --all-targets --locked
 
     steps:
       - name: Checkout
@@ -139,7 +139,7 @@ jobs:
 
       - name: Run tests for release-facing crates
         shell: bash
-        run: cargo test -p mars-xlog-core -p mars-xlog -p mars-xlog-cli --all-features --locked
+        run: cargo test -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-features --locked
 
   npm-package:
     runs-on: ubuntu-latest

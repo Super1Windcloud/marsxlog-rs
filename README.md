@@ -6,7 +6,7 @@ This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The
 
 - `mars-xlog` is the release-facing Rust crate and the intended Cargo entry point for Rust users.
 - `mars-xlog-core` is the implementation-layer crate used by `mars-xlog`.
-- `mars-xlog-cli` provides the `mars-xlog` command-line decoder for xlog files.
+- `xlog-decoder` provides the `xlog-decoder` / `mars-xlog` command-line decoder for xlog files, batch folders, and feedback ZIP packages.
 - `mars-xlog-sys` and the platform binding crates remain repository-local support crates and are not part of the `mars-xlog` release surface.
 
 ## Migration status
@@ -17,7 +17,7 @@ This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The
 ## Workspace crates
 - `mars-xlog-core`: Rust runtime core (protocol/compress/crypto/mmap/appender).
 - `mars-xlog`: safe Rust wrapper API and the default Rust integration surface.
-- `mars-xlog-cli`: command-line decoder for Mars-compatible `.xlog` files.
+- `xlog-decoder`: command-line decoder for Mars-compatible `.xlog` files and archives.
 - `mars-xlog-uniffi`: minimal UniFFI surface (Kotlin/Swift friendly).
 - `mars-xlog-android-jni`: JNI bridge used by the Android example app.
 - `oh-xlog`: Harmony/ohos N-API bindings.
@@ -86,6 +86,9 @@ mars-xlog --input app.xlog --output app.log
 Install options:
 
 ```bash
+# Cargo install from crates.io (recommended):
+cargo install xlog-decoder
+
 # Homebrew tap/cask install from this repository or a copied tap.
 brew install --cask ./Casks/mars-xlog.rb
 

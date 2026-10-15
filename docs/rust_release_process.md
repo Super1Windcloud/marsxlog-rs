@@ -4,7 +4,7 @@
 
 发布链路拆成四个可独立执行的工作流：
 
-1. `rust-crates-release`：发布 `mars-xlog-core`、`mars-xlog`、`mars-xlog-cli` 到 crates.io
+1. `rust-crates-release`：发布 `mars-xlog-core`、`mars-xlog`、`xlog-decoder` 到 crates.io
 2. `cli-binary-release`：构建 macOS/Linux/Windows 的 `mars-xlog` 二进制并上传 GitHub Release assets
 3. `brew-cask-release`：校验并上传 Homebrew cask，cask 使用 `cli-binary-release` 产出的 macOS assets
 4. `npm-release`：发布 npm 包 `mars-xlog-cli`，安装时下载 GitHub Release 里的预编译 CLI
@@ -24,7 +24,7 @@
 5. `Casks/mars-xlog.rb`
 6. workspace 内对 `mars-xlog-core` / `mars-xlog` 的 path 依赖版本
 
-使用统一版本的原因是：`mars-xlog-cli` 依赖 `mars-xlog-core` 的 decoder API。若 CLI 发布到 crates.io，必须确保它依赖的 core 版本已经包含对应 API。
+使用统一版本的原因是：`xlog-decoder` 依赖 `mars-xlog-core` 的 decoder API。若 CLI 发布到 crates.io，必须确保它依赖的 core 版本已经包含对应 API。
 
 版本更新命令：
 
@@ -108,7 +108,7 @@ git push origin v0.1.0
 5. 若 `mars-xlog` 当前版本尚未发布，则发布 `mars-xlog`
 6. 等待 `mars-xlog` 在 crates.io 可见
 7. 运行 `scripts/xlog/check_mars_xlog_cli_release.sh`
-8. 若 `mars-xlog-cli` 当前版本尚未发布，则发布 `mars-xlog-cli`
+8. 若 `xlog-decoder` 当前版本尚未发布，则发布 `xlog-decoder`
 
 需要 secret：
 

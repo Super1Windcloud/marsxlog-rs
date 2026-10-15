@@ -19,8 +19,8 @@
 下面这些检查应视为长期硬门槛：
 
 1. `cargo fmt --all --check`
-2. `cargo clippy -p mars-xlog-core -p mars-xlog -p mars-xlog-cli --all-targets --all-features --locked -- -D warnings`
-3. `cargo test -p mars-xlog-core -p mars-xlog -p mars-xlog-cli --all-features --locked`
+2. `cargo clippy -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-targets --all-features --locked -- -D warnings`
+3. `cargo test -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-features --locked`
 4. `cargo check` 的关键 feature / target 组合
 5. npm 包内容检查可执行且结果符合预期
 6. release preflight 脚本可执行且结果符合预期
@@ -52,7 +52,7 @@
 2. `mars-xlog`：默认特性
 3. `mars-xlog`：`--all-features`
 4. `mars-xlog`：`--no-default-features --features rust-backend`
-5. `mars-xlog-cli`：`cargo check --all-targets`
+5. `xlog-decoder`：`cargo check --all-targets`
 
 原因：
 
