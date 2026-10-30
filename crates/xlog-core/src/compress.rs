@@ -229,7 +229,7 @@ pub fn decompress_raw_zlib(input: &[u8]) -> Result<Vec<u8>, CompressError> {
     let mut out = Vec::with_capacity(input.len().saturating_mul(2).max(1024));
     let mut input_offset = 0;
 
-    while input_offset < input.len() {
+    loop {
         if out.capacity() == out.len() {
             out.reserve(out.len().max(4096));
         }
@@ -245,6 +245,13 @@ pub fn decompress_raw_zlib(input: &[u8]) -> Result<Vec<u8>, CompressError> {
         input_offset += consumed;
 
         if status == Status::StreamEnd {
+            break;
+        }
+
+        // Finished only when the input is exhausted and the last call left
+        // spare output room. A full output buffer means the decompressor may
+        // still hold decoded bytes even after consuming all input.
+        if input_offset >= input.len() && out.len() < out.capacity() {
             break;
         }
 

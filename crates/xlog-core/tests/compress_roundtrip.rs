@@ -44,3 +44,27 @@ fn zlib_stream_chunk_without_final_flush_roundtrip() {
     let plain = decompress_raw_zlib(&out).unwrap();
     assert_eq!(plain, b"line-1\nline-2\n");
 }
+
+#[test]
+fn zlib_stream_decodes_payload_much_larger_than_input() {
+    // Log text often compresses 5-10x. The decoder used to stop once the input
+    // was consumed even though the decompressor still held output that did
+    // not fit the first output buffer, truncating the block mid-line.
+    let line =
+        b"[I][2026-10-30 +8.0 12:00:00.000][1234, 5678][tag][file.rs:1, func][same message]\n";
+    let plain: Vec<u8> = line.iter().copied().cycle().take(64 * 1024).collect();
+
+    for finish in [false, true] {
+        let mut compressor = ZlibStreamCompressor::default();
+        let mut out = Vec::new();
+        compressor.write_plain(&plain, &mut out).unwrap();
+        if finish {
+            compressor.finish_into(&mut out).unwrap();
+        }
+        assert!(out.len() * 10 < plain.len(), "fixture must compress well");
+
+        let decoded = decompress_raw_zlib(&out).unwrap();
+        assert_eq!(decoded.len(), plain.len(), "finish={finish}");
+        assert_eq!(decoded, plain, "finish={finish}");
+    }
+}
