@@ -27,6 +27,10 @@ const ASYNC_BUFFER_FLUSH_THRESHOLD_DEN: usize = 3;
 const MIN_LOG_ALIVE_SECONDS: i64 = 24 * 60 * 60;
 const EXPIRED_SWEEP_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const CACHE_MOVE_INTERVAL: Duration = Duration::from_secs(3 * 60);
+// Upper bound for a caller waiting on a sync flush ack. Crash handlers and the
+// Android main thread call sync flush; a stalled disk must not hang them.
+const SYNC_FLUSH_ACK_TIMEOUT: Duration = Duration::from_secs(3);
+const WORKER_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -66,6 +70,13 @@ pub enum AppenderEngineError {
     #[error("engine worker channel closed")]
     /// The background worker is no longer available.
     ChannelClosed,
+    #[error("spawn engine worker failed: {0}")]
+    /// The background worker thread could not be created.
+    SpawnWorker(#[source] std::io::Error),
+    #[error("engine worker did not acknowledge the sync flush in time")]
+    /// A sync flush was queued but the worker did not finish it in time.
+    /// The flush may still complete later.
+    FlushTimeout,
     #[error("invalid engine mode for this operation")]
     /// The requested API was used in the wrong [`EngineMode`].
     InvalidMode,
@@ -147,10 +158,38 @@ impl AppenderEngine {
         )
     }
 
+    /// Fallible variant of [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppenderEngineError::SpawnWorker`] when the worker thread
+    /// cannot be created.
+    pub fn try_new(
+        file_manager: FileManager,
+        buffer: PersistentBuffer,
+        mode: EngineMode,
+        max_file_size: u64,
+        max_alive_time: i64,
+    ) -> Result<Self, AppenderEngineError> {
+        Self::try_new_with_flush_timeout(
+            file_manager,
+            buffer,
+            mode,
+            max_file_size,
+            max_alive_time,
+            DEFAULT_ASYNC_FLUSH_TIMEOUT,
+        )
+    }
+
     /// Create a new engine with an explicit async flush timeout.
     ///
     /// `max_alive_time` is clamped to the minimum retention floor enforced by
     /// the historical Mars behavior.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the worker thread cannot be created. Use
+    /// [`Self::try_new_with_flush_timeout`] to handle that case.
     pub fn new_with_flush_timeout(
         file_manager: FileManager,
         buffer: PersistentBuffer,
@@ -159,6 +198,31 @@ impl AppenderEngine {
         max_alive_time: i64,
         flush_timeout: Duration,
     ) -> Self {
+        Self::try_new_with_flush_timeout(
+            file_manager,
+            buffer,
+            mode,
+            max_file_size,
+            max_alive_time,
+            flush_timeout,
+        )
+        .expect("spawn appender engine thread")
+    }
+
+    /// Fallible variant of [`Self::new_with_flush_timeout`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppenderEngineError::SpawnWorker`] when the worker thread
+    /// cannot be created.
+    pub fn try_new_with_flush_timeout(
+        file_manager: FileManager,
+        buffer: PersistentBuffer,
+        mode: EngineMode,
+        max_file_size: u64,
+        max_alive_time: i64,
+        flush_timeout: Duration,
+    ) -> Result<Self, AppenderEngineError> {
         let buffer_capacity = buffer.capacity();
         let now = Instant::now();
         let clamped_alive_time = max_alive_time.max(MIN_LOG_ALIVE_SECONDS);
@@ -211,9 +275,9 @@ impl AppenderEngine {
                     flush_timeout,
                 })
             })
-            .expect("spawn appender engine thread");
+            .map_err(AppenderEngineError::SpawnWorker)?;
 
-        Self {
+        Ok(Self {
             mode: AtomicU8::new(u8::from(mode)),
             paths,
             state,
@@ -226,7 +290,7 @@ impl AppenderEngine {
             async_flush_reason,
             async_flush_requeue_count,
             worker: Mutex::new(Some(worker)),
-        }
+        })
     }
 
     /// Return the current engine mode.
@@ -349,13 +413,12 @@ impl AppenderEngine {
                         .saturating_add(block.len());
                     let should_persist_mmap = should_persist_async_mmap(&state, force_flush);
                     let persist_reason = async_persist_reason(&state, force_flush);
-                    let appended = state
-                        .buffer
-                        .append_block_with_flush(block, should_persist_mmap)?;
+                    let appended = state.buffer.append_block_with_flush(block, false)?;
                     if !appended {
                         record_async_buffer_append_failed();
                     }
                     if should_persist_mmap {
+                        persist_async_mmap(&mut state.buffer, force_flush)?;
                         record_async_buffer_persisted(persist_reason);
                         mark_async_mmap_persisted(&mut state);
                     }
@@ -363,9 +426,11 @@ impl AppenderEngine {
 
                     if !appended {
                         let _ = flush_pending_locked(&mut state, true, false)?;
-                        let appended_after_flush = state
-                            .buffer
-                            .append_block_with_flush(block, should_persist_mmap)?;
+                        let appended_after_flush =
+                            state.buffer.append_block_with_flush(block, false)?;
+                        if appended_after_flush && should_persist_mmap {
+                            persist_async_mmap(&mut state.buffer, force_flush)?;
+                        }
                         if !appended_after_flush {
                             record_async_buffer_append_failed();
                         }
@@ -446,10 +511,9 @@ impl AppenderEngine {
             .saturating_add(HEADER_LEN);
         let should_persist_mmap = should_persist_async_mmap(&state, false);
         let persist_reason = async_persist_reason(&state, false);
-        state
-            .buffer
-            .begin_pending_block_with_flush(header, should_persist_mmap)?;
+        state.buffer.begin_pending_block_with_flush(header, false)?;
         if should_persist_mmap {
+            persist_async_mmap(&mut state.buffer, false)?;
             record_async_buffer_persisted(persist_reason);
             mark_async_mmap_persisted(&mut state);
         }
@@ -491,13 +555,11 @@ impl AppenderEngine {
                 .saturating_add(bytes_delta);
             let should_persist_mmap = should_persist_async_mmap(&state, force_flush);
             let persist_reason = async_persist_reason(&state, force_flush);
-            state.buffer.append_to_pending_with_flush(
-                truncate_bytes,
-                chunk,
-                end_hour,
-                should_persist_mmap,
-            )?;
+            state
+                .buffer
+                .append_to_pending_with_flush(truncate_bytes, chunk, end_hour, false)?;
             if should_persist_mmap {
+                persist_async_mmap(&mut state.buffer, force_flush)?;
                 record_async_buffer_persisted(persist_reason);
                 mark_async_mmap_persisted(&mut state);
             }
@@ -531,8 +593,9 @@ impl AppenderEngine {
             let persist_reason = async_persist_reason(&state, force_flush);
             state
                 .buffer
-                .finalize_pending_block_with_flush(end_hour, should_persist_mmap)?;
+                .finalize_pending_block_with_flush(end_hour, false)?;
             if should_persist_mmap {
+                persist_async_mmap(&mut state.buffer, force_flush)?;
                 record_async_buffer_persisted(persist_reason);
                 mark_async_mmap_persisted(&mut state);
             }
@@ -647,10 +710,11 @@ impl AppenderEngine {
                     reason,
                 })
                 .map_err(|_| AppenderEngineError::ChannelClosed)?;
-            ack_rx
-                .recv()
-                .map_err(|_| AppenderEngineError::ChannelClosed)?;
-            return Ok(());
+            return match ack_rx.recv_timeout(SYNC_FLUSH_ACK_TIMEOUT) {
+                Ok(()) => Ok(()),
+                Err(RecvTimeoutError::Timeout) => Err(AppenderEngineError::FlushTimeout),
+                Err(RecvTimeoutError::Disconnected) => Err(AppenderEngineError::ChannelClosed),
+            };
         }
 
         if self.pending_async_flush.swap(true, Ordering::AcqRel) {
@@ -678,8 +742,14 @@ impl Drop for AppenderEngine {
 
         let (ack_tx, ack_rx) = bounded(1);
         let _ = self.tx.send(EngineCommand::Stop { ack: ack_tx });
-        let _ = ack_rx.recv_timeout(Duration::from_secs(2));
-        let _ = worker.join();
+        // Only join a worker that has stopped or exited. A worker stuck in
+        // file I/O is detached so the dropping thread is not blocked forever.
+        match ack_rx.recv_timeout(WORKER_STOP_ACK_TIMEOUT) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                let _ = worker.join();
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
     }
 }
 
@@ -757,7 +827,8 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
                     .map_err(|_| ())
                     .and_then(|mut s| {
                         let flushed = flush_pending_locked(&mut s, true, false).map_err(|_| ())?;
-                        maybe_housekeep_locked(&mut s, true).map_err(|_| ())?;
+                        // Housekeeping failures must not hide a completed flush.
+                        let _ = maybe_housekeep_locked(&mut s, true);
                         Ok(flushed)
                     })
                     .unwrap_or(false);
@@ -874,6 +945,17 @@ fn should_persist_async_mmap(state: &EngineState, force_flush: bool) -> bool {
         || state.last_async_buffer_persist_at.elapsed() >= ASYNC_PENDING_MMAP_PERSIST_INTERVAL
 }
 
+/// Periodic hot-path persistence uses `MS_ASYNC`: the shared mapping already
+/// survives a process crash, and `MS_SYNC` here stalls the writer on disk I/O
+/// while the state lock is held. Fatal lines (`force_flush`) still wait.
+fn persist_async_mmap(buffer: &mut PersistentBuffer, force_flush: bool) -> Result<(), BufferError> {
+    if force_flush {
+        buffer.persist()
+    } else {
+        buffer.persist_async()
+    }
+}
+
 fn mark_async_mmap_persisted(state: &mut EngineState) {
     state.async_pending_updates_since_persist = 0;
     state.async_pending_bytes_since_persist = 0;
@@ -910,7 +992,9 @@ fn handle_timeout_locked(
     if !state.buffer.is_empty() && state.last_async_buffer_mutation_at.elapsed() >= flush_timeout {
         flushed = flush_pending_locked(state, true, false)?;
     }
-    maybe_housekeep_locked(state, false)?;
+    // A failed sweep must not drop the flushed flag: the caller bumps the flush
+    // epoch from it, and the frontend relies on that to retire stale blocks.
+    let _ = maybe_housekeep_locked(state, false);
     Ok(flushed)
 }
 

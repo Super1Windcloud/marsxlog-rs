@@ -116,6 +116,13 @@ impl MmapStore {
             .flush()
             .map_err(|e| MmapStoreError::Flush(self.path.clone(), e))
     }
+
+    /// Schedule write-back of pending mmap mutations without waiting.
+    pub fn flush_async(&mut self) -> Result<(), MmapStoreError> {
+        self.mmap
+            .flush_async()
+            .map_err(|e| MmapStoreError::Flush(self.path.clone(), e))
+    }
 }
 
 fn open_rw_file(path: &Path) -> Result<File, MmapStoreError> {
