@@ -17,7 +17,7 @@ crates.io 发布在本机执行 `cargo publish`。仓库里不再保留 GitHub A
 5. `Casks/mars-xlog.rb`
 6. workspace 内对 `mars-xlog-core` / `mars-xlog` 的 path 依赖版本
 
-使用统一版本的原因是：`xlog-decoder` 依赖 `mars-xlog-core` 的 decoder API。若 CLI 发布到 crates.io，必须确保它依赖的 core 版本已经包含对应 API。
+使用统一版本的原因是：crate、npm 包和 Homebrew cask 按同一个 release version 发布。`xlog-decoder` 自带解码实现，不依赖 `mars-xlog-core`。
 
 版本更新命令：
 

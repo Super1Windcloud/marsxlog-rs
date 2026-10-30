@@ -1,10 +1,10 @@
-use mars_xlog_core::compress::{ZlibLevel, ZlibStreamCompressor, ZstdLevel, ZstdStreamCompressor};
-use mars_xlog_core::crypto::{Crypt, PrivateKey};
-use mars_xlog_core::decoder::{decode_xlog, DecodeError, DecodeOptions};
-use mars_xlog_core::protocol::{
-    AppendMode, BlockMagic, CompressionKind, Hour, LogHeader, MAGIC_ASYNC_ZLIB_START,
+use xlog_decoder::core::compress::{StreamCompressor, ZlibStreamCompressor, ZstdStreamCompressor};
+use xlog_decoder::core::crypto::EcdhTeaCipher;
+use xlog_decoder::core::protocol::{
+    select_magic, AppendMode, CompressionKind, LogHeader, MAGIC_ASYNC_ZLIB_START,
     MAGIC_SYNC_NO_CRYPT_ZLIB_START,
 };
+use xlog_decoder::{decode_xlog, DecodeError, DecodeOptions};
 
 const TEST_SERVER_PUBKEY_HEX: &str = concat!(
     "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
@@ -14,12 +14,12 @@ const TEST_SERVER_PRIVKEY_ONE: [u8; 32] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 ];
 
-fn block(magic: BlockMagic, seq: u16, client_pubkey: [u8; 64], payload: &[u8]) -> Vec<u8> {
+fn block(magic: u8, seq: u16, client_pubkey: [u8; 64], payload: &[u8]) -> Vec<u8> {
     let header = LogHeader {
         magic,
         seq,
-        begin_hour: Hour::try_from(1).unwrap(),
-        end_hour: Hour::try_from(1).unwrap(),
+        begin_hour: 1,
+        end_hour: 1,
         len: payload.len() as u32,
         client_pubkey,
     };
@@ -32,12 +32,7 @@ fn block(magic: BlockMagic, seq: u16, client_pubkey: [u8; 64], payload: &[u8]) -
 
 #[test]
 fn decodes_sync_plaintext_block() {
-    let bytes = block(
-        BlockMagic::try_from(MAGIC_SYNC_NO_CRYPT_ZLIB_START).unwrap(),
-        0,
-        [0; 64],
-        b"sync line\n",
-    );
+    let bytes = block(MAGIC_SYNC_NO_CRYPT_ZLIB_START, 0, [0; 64], b"sync line\n");
 
     let mut out = Vec::new();
     let summary = decode_xlog(&bytes, &mut out, &DecodeOptions::new()).unwrap();
@@ -48,25 +43,27 @@ fn decodes_sync_plaintext_block() {
 
 #[test]
 fn decodes_async_zlib_and_zstd_plaintext_blocks() {
-    let mut zlib = ZlibStreamCompressor::new(ZlibLevel::try_from(6).unwrap());
+    let mut zlib = ZlibStreamCompressor::new(6);
     let mut zlib_payload = Vec::new();
-    zlib.write_plain(b"zlib one\n", &mut zlib_payload).unwrap();
-    zlib.finish_into(&mut zlib_payload).unwrap();
+    zlib.compress_chunk(b"zlib one\n", &mut zlib_payload)
+        .unwrap();
+    zlib.flush(&mut zlib_payload).unwrap();
 
-    let mut zstd = ZstdStreamCompressor::new(ZstdLevel::try_from(3).unwrap()).unwrap();
+    let mut zstd = ZstdStreamCompressor::new(3).unwrap();
     let mut zstd_payload = Vec::new();
-    zstd.write_plain(b"zstd two\n", &mut zstd_payload).unwrap();
-    zstd.finish_into(&mut zstd_payload).unwrap();
+    zstd.compress_chunk(b"zstd two\n", &mut zstd_payload)
+        .unwrap();
+    zstd.flush(&mut zstd_payload).unwrap();
 
     let mut bytes = Vec::new();
     bytes.extend(block(
-        BlockMagic::new(CompressionKind::Zlib, AppendMode::Async, false),
+        select_magic(CompressionKind::Zlib, AppendMode::Async, false),
         1,
         [0; 64],
         &zlib_payload,
     ));
     bytes.extend(block(
-        BlockMagic::new(CompressionKind::Zstd, AppendMode::Async, false),
+        select_magic(CompressionKind::Zstd, AppendMode::Async, false),
         2,
         [0; 64],
         &zstd_payload,
@@ -81,22 +78,18 @@ fn decodes_async_zlib_and_zstd_plaintext_blocks() {
 
 #[test]
 fn decodes_async_encrypted_zlib_block_with_private_key() {
-    let cipher = Crypt::from_client_secret(
-        TEST_SERVER_PUBKEY_HEX,
-        PrivateKey::try_from([7; 32]).unwrap(),
-    )
-    .unwrap();
-    let mut compressor = ZlibStreamCompressor::new(ZlibLevel::try_from(6).unwrap());
+    let cipher = EcdhTeaCipher::new_with_private_key(TEST_SERVER_PUBKEY_HEX, [7; 32]).unwrap();
+    let mut compressor = ZlibStreamCompressor::new(6);
     let mut payload = Vec::new();
     compressor
-        .write_plain(b"secret async line\n", &mut payload)
+        .compress_chunk(b"secret async line\n", &mut payload)
         .unwrap();
-    compressor.finish_into(&mut payload).unwrap();
+    compressor.flush(&mut payload).unwrap();
     let mut encrypted = payload.clone();
     cipher.encrypt_async_in_place(&mut encrypted);
 
     let bytes = block(
-        BlockMagic::try_from(MAGIC_ASYNC_ZLIB_START).unwrap(),
+        MAGIC_ASYNC_ZLIB_START,
         1,
         cipher.client_pubkey(),
         &encrypted,
@@ -112,13 +105,9 @@ fn decodes_async_encrypted_zlib_block_with_private_key() {
 
 #[test]
 fn encrypted_async_block_requires_private_key() {
-    let cipher = Crypt::from_client_secret(
-        TEST_SERVER_PUBKEY_HEX,
-        PrivateKey::try_from([9; 32]).unwrap(),
-    )
-    .unwrap();
+    let cipher = EcdhTeaCipher::new_with_private_key(TEST_SERVER_PUBKEY_HEX, [9; 32]).unwrap();
     let bytes = block(
-        BlockMagic::try_from(MAGIC_ASYNC_ZLIB_START).unwrap(),
+        MAGIC_ASYNC_ZLIB_START,
         1,
         cipher.client_pubkey(),
         b"payload",
@@ -134,7 +123,7 @@ fn encrypted_async_block_requires_private_key() {
 fn skips_prefix_bytes_before_first_block() {
     let mut bytes = b"noise".to_vec();
     bytes.extend(block(
-        BlockMagic::try_from(MAGIC_SYNC_NO_CRYPT_ZLIB_START).unwrap(),
+        MAGIC_SYNC_NO_CRYPT_ZLIB_START,
         0,
         [0; 64],
         b"after noise\n",
