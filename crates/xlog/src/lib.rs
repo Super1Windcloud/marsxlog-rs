@@ -760,14 +760,56 @@ mod tests {
         files.sort();
         assert!(!files.is_empty(), "expected an xlog file");
         let bytes = fs::read(&files[0]).expect("read xlog");
-        let header = LogHeader::decode(&bytes[..HEADER_LEN]).expect("header");
-        let payload_len = header.len as usize;
-        let start = HEADER_LEN;
-        let end = start + payload_len;
-        assert!(end < bytes.len(), "payload fits before end byte");
-        assert_eq!(bytes[end], MAGIC_END);
-        let text = String::from_utf8(bytes[start..end].to_vec()).expect("sync plaintext");
-        (u8::from(header.magic), text)
+        let mut offset = 0usize;
+        loop {
+            let header = LogHeader::decode(&bytes[offset..offset + HEADER_LEN]).expect("header");
+            let start = offset + HEADER_LEN;
+            let end = start + header.len as usize;
+            assert!(end < bytes.len(), "payload fits before end byte");
+            assert_eq!(bytes[end], MAGIC_END);
+            let text = String::from_utf8(bytes[start..end].to_vec()).expect("sync plaintext");
+            // Skip the diagnostics line every instance writes at open.
+            if text.starts_with(STARTUP_INFO_PREFIX) {
+                offset = end + TAILER_LEN;
+                continue;
+            }
+            return (u8::from(header.magic), text);
+        }
+    }
+
+    const STARTUP_INFO_PREFIX: &str = "~~~~~ mars-xlog-rs ";
+
+    #[test]
+    fn open_writes_startup_info_line() {
+        let dir = TempDir::new().expect("tempdir");
+        let logger =
+            Xlog::init(sync_config(dir.path(), "startup-info"), LogLevel::Error).expect("init");
+        logger.flush(true);
+
+        let text = decoded_log_text(dir.path());
+        assert!(text.starts_with(STARTUP_INFO_PREFIX), "{text}");
+        assert!(text.contains("log appender mode:1, use mmap:1"), "{text}");
+        assert!(text.contains("log dir available:"), "{text}");
+    }
+
+    #[test]
+    fn unusable_mmap_file_falls_back_to_memory_buffer() {
+        let dir = TempDir::new().expect("tempdir");
+        let prefix = unique_prefix("mmap-fallback");
+        // A directory where the mmap file should be makes opening it fail,
+        // standing in for a full disk or a broken mmap file.
+        fs::create_dir_all(dir.path().join(format!("{prefix}.mmap3"))).expect("block mmap path");
+        let cfg = XlogConfig::new(dir.path().to_string_lossy(), &prefix)
+            .mode(AppenderMode::Async)
+            .compress_level(6);
+
+        let logger = Xlog::init(cfg, LogLevel::Info).expect("init must not fail");
+        logger.write(LogLevel::Info, Some("tag"), "kept-in-memory");
+        logger.flush(true);
+
+        let text = decoded_log_text(dir.path());
+        assert!(text.contains("use mmap:0"), "{text}");
+        assert!(text.contains("kept-in-memory"), "{text}");
     }
 
     fn sync_config(dir: &Path, label: &str) -> XlogConfig {

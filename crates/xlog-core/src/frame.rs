@@ -275,6 +275,14 @@ impl FrameWriter {
         }
     }
 
+    /// Replace the flush epoch with the one the engine assigned when it began
+    /// this block, which can be newer than the epoch passed to [`Self::open`].
+    pub fn set_flush_epoch(&mut self, flush_epoch: u64) {
+        if let FrameKind::Async(state) = &mut self.kind {
+            state.flush_epoch = flush_epoch;
+        }
+    }
+
     fn with_compressed(
         &mut self,
         encoded: &mut Vec<u8>,

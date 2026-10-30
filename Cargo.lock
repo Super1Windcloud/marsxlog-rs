@@ -1136,6 +1136,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "crossbeam-queue",
+ "fs2",
  "libc",
  "mars-xlog-core",
  "metrics",
