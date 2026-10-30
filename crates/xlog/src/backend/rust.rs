@@ -339,13 +339,17 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 const ASYNC_WARNING_THRESHOLD_NUM: usize = 4;
 const ASYNC_WARNING_THRESHOLD_DEN: usize = 5;
-const ASYNC_FRONTEND_QUEUE_CAPACITY: usize = 65536;
+// Queued lines stay in memory until the worker drains them. 65536 slots let a
+// burst of 4 KB lines pin ~700 MB (measured with bench_backend, 4 threads);
+// 8192 keeps the worst case in the tens of MB on 32-bit Android processes.
+const ASYNC_FRONTEND_QUEUE_CAPACITY: usize = 8192;
 const ASYNC_FRONTEND_FULL_RETRY_BEFORE_BLOCK_DEFAULT: usize = 4;
 const ASYNC_FRONTEND_FULL_RETRY_BEFORE_BLOCK_ZSTD: usize = 1;
 const ASYNC_FRONTEND_WRITE_BATCH_MAX: usize = 128;
 const ASYNC_LINE_POOL_SHARDS: usize = 16;
-const ASYNC_LINE_POOL_MAX_BUFFERS_PER_SHARD: usize = 256;
-const ASYNC_LINE_POOL_MAX_CAPACITY: usize = 8 * 1024;
+// Pooled buffers are never freed; cap the pool at 16 * 64 * 4 KB = 4 MB.
+const ASYNC_LINE_POOL_MAX_BUFFERS_PER_SHARD: usize = 64;
+const ASYNC_LINE_POOL_MAX_CAPACITY: usize = 4 * 1024;
 const ASYNC_LINE_BUFFER_INIT_CAPACITY: usize = 512;
 const ASYNC_LINE_POOL_SHARD_SENTINEL: usize = usize::MAX;
 // A full queue means the worker is stalled (usually on disk I/O). Producers
