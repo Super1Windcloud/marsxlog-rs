@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,9 @@ use thiserror::Error;
 
 use crate::buffer::{validate_block, BufferError, PersistentBuffer};
 use crate::file_manager::{FileManager, FileManagerError};
+use crate::platform_console::write_console_line;
 use crate::protocol::{Hour, LogHeader, HEADER_LEN, MAGIC_END};
+use crate::record::LogLevel;
 use crate::recovery::{build_sync_tip_block, current_mark_info};
 
 const DEFAULT_ASYNC_FLUSH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -31,6 +33,8 @@ const CACHE_MOVE_INTERVAL: Duration = Duration::from_secs(3 * 60);
 // Android main thread call sync flush; a stalled disk must not hang them.
 const SYNC_FLUSH_ACK_TIMEOUT: Duration = Duration::from_secs(3);
 const WORKER_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+// File errors tend to repeat on every flush (for example a full disk).
+const IO_ERROR_TIP_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -77,6 +81,10 @@ pub enum AppenderEngineError {
     /// A sync flush was queued but the worker did not finish it in time.
     /// The flush may still complete later.
     FlushTimeout,
+    #[error("async pending block was flushed before this update")]
+    /// A flush wrote out the pending block named by the caller's epoch. The
+    /// buffer was left untouched; begin a new block and retry.
+    StaleBlock,
     #[error("invalid engine mode for this operation")]
     /// The requested API was used in the wrong [`EngineMode`].
     InvalidMode,
@@ -107,6 +115,10 @@ struct EngineState {
     last_async_buffer_persist_at: Instant,
     last_expired_sweep_at: Instant,
     last_cache_move_at: Instant,
+    // Advanced under the state lock whenever the buffer is cleared, so a
+    // writer holding the lock can tell whether its pending block still exists.
+    flush_epoch: Arc<AtomicU64>,
+    flush_reason: Arc<AtomicU8>,
 }
 
 enum EngineCommand {
@@ -231,6 +243,10 @@ impl AppenderEngine {
             cache_dir: file_manager.cache_dir().map(std::path::Path::to_path_buf),
             name_prefix: file_manager.name_prefix().to_string(),
         };
+        let async_flush_epoch = Arc::new(AtomicU64::new(0));
+        let async_flush_reason = Arc::new(AtomicU8::new(async_flush_reason_to_u8(
+            AsyncFlushReason::Unknown,
+        )));
         let state = Arc::new(Mutex::new(EngineState {
             file_manager: file_manager.clone(),
             buffer,
@@ -242,24 +258,20 @@ impl AppenderEngine {
             last_async_buffer_persist_at: now,
             last_expired_sweep_at: now,
             last_cache_move_at: now,
+            flush_epoch: Arc::clone(&async_flush_epoch),
+            flush_reason: Arc::clone(&async_flush_reason),
         }));
         if let Ok(mut state_guard) = state.lock() {
             // Keep parity with C++ appender startup behavior: drain recovered mmap data
             // into logfile immediately instead of waiting for next write/flush.
-            let _ = flush_pending_locked(&mut state_guard, false, true);
+            let _ = flush_pending_locked(&mut state_guard, false, true, AsyncFlushReason::Unknown);
         }
         let (tx, rx) = unbounded();
         let worker_tx = tx.clone();
         let pending_async_flush = Arc::new(AtomicBool::new(false));
-        let async_flush_epoch = Arc::new(AtomicU64::new(0));
-        let async_flush_reason = Arc::new(AtomicU8::new(async_flush_reason_to_u8(
-            AsyncFlushReason::Unknown,
-        )));
         let async_flush_requeue_count = Arc::new(AtomicU64::new(0));
         let worker_state = Arc::clone(&state);
         let worker_pending_flag = Arc::clone(&pending_async_flush);
-        let worker_flush_epoch = Arc::clone(&async_flush_epoch);
-        let worker_flush_reason = Arc::clone(&async_flush_reason);
         let worker_flush_requeue_count = Arc::clone(&async_flush_requeue_count);
         let worker = thread::Builder::new()
             .name("xlog-appender-engine".to_string())
@@ -269,8 +281,6 @@ impl AppenderEngine {
                     rx,
                     tx: worker_tx,
                     pending_async_flush: worker_pending_flag,
-                    async_flush_epoch: worker_flush_epoch,
-                    async_flush_reason: worker_flush_reason,
                     async_flush_requeue_count: worker_flush_requeue_count,
                     flush_timeout,
                 })
@@ -392,7 +402,8 @@ impl AppenderEngine {
 
         match mode_snapshot {
             EngineMode::Sync => {
-                self.state
+                let appended = self
+                    .state
                     .lock()
                     .expect("state lock poisoned")
                     .file_manager
@@ -401,7 +412,11 @@ impl AppenderEngine {
                         self.max_file_size.load(Ordering::Relaxed),
                         false,
                         true,
-                    )?;
+                    );
+                if let Err(err) = appended {
+                    report_io_error("xlog sync write failed", &err);
+                    return Err(err.into());
+                }
             }
             EngineMode::Async => {
                 let should_flush = {
@@ -425,7 +440,12 @@ impl AppenderEngine {
                     state.last_async_buffer_mutation_at = Instant::now();
 
                     if !appended {
-                        let _ = flush_pending_locked(&mut state, true, false)?;
+                        let _ = flush_pending_locked(
+                            &mut state,
+                            true,
+                            false,
+                            AsyncFlushReason::Threshold,
+                        )?;
                         let appended_after_flush =
                             state.buffer.append_block_with_flush(block, false)?;
                         if appended_after_flush && should_persist_mmap {
@@ -504,21 +524,78 @@ impl AppenderEngine {
             return Err(AppenderEngineError::InvalidMode);
         }
         let mut state = self.state.lock().expect("state lock poisoned");
-        state.async_pending_updates_since_persist =
-            state.async_pending_updates_since_persist.saturating_add(1);
-        state.async_pending_bytes_since_persist = state
-            .async_pending_bytes_since_persist
-            .saturating_add(HEADER_LEN);
-        let should_persist_mmap = should_persist_async_mmap(&state, false);
-        let persist_reason = async_persist_reason(&state, false);
-        state.buffer.begin_pending_block_with_flush(header, false)?;
-        if should_persist_mmap {
-            persist_async_mmap(&mut state.buffer, false)?;
-            record_async_buffer_persisted(persist_reason);
-            mark_async_mmap_persisted(&mut state);
+        begin_pending_locked(&mut state, header)
+    }
+
+    /// Begin a new async pending block and return the flush epoch it belongs to.
+    ///
+    /// Bytes still in the buffer (for example a sealed block whose flush has
+    /// not run yet) are written out first, so the new header never overwrites
+    /// unflushed data. Pass the returned epoch to [`Self::append_async_block`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppenderEngineError::InvalidMode`] in sync mode, or a buffer
+    /// or file error when the leftover flush or the header write fails.
+    pub fn begin_async_block(&self, header: &LogHeader) -> Result<u64, AppenderEngineError> {
+        if self.mode() != EngineMode::Async {
+            return Err(AppenderEngineError::InvalidMode);
         }
-        state.last_async_buffer_mutation_at = Instant::now();
-        record_async_buffer_len(state.buffer.len(), state.buffer.capacity());
+        let mut state = self.state.lock().expect("state lock poisoned");
+        if !state.buffer.is_empty() {
+            flush_pending_locked(&mut state, true, false, AsyncFlushReason::Threshold)?;
+        }
+        begin_pending_locked(&mut state, header)?;
+        Ok(state.flush_epoch.load(Ordering::Acquire))
+    }
+
+    /// Append to, and optionally seal, the pending block begun at `epoch`.
+    ///
+    /// The epoch check and the update run under one lock acquisition. When a
+    /// flush has written the block out since `epoch`, the buffer is left
+    /// untouched and [`AppenderEngineError::StaleBlock`] is returned; the
+    /// caller should begin a new block and retry instead of dropping the data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppenderEngineError::StaleBlock`], [`AppenderEngineError::InvalidMode`]
+    /// in sync mode, or a buffer error when the update cannot be applied.
+    pub fn append_async_block(
+        &self,
+        epoch: u64,
+        truncate_bytes: usize,
+        payload: &[u8],
+        end_hour: Hour,
+        seal: bool,
+        force_flush: bool,
+    ) -> Result<(), AppenderEngineError> {
+        if self.mode() != EngineMode::Async {
+            return Err(AppenderEngineError::InvalidMode);
+        }
+        let should_flush = {
+            let mut state = self.state.lock().expect("state lock poisoned");
+            if state.flush_epoch.load(Ordering::Acquire) != epoch {
+                return Err(AppenderEngineError::StaleBlock);
+            }
+            let mut should_flush = false;
+            if truncate_bytes > 0 || !payload.is_empty() {
+                should_flush |= append_chunk_locked(
+                    &mut state,
+                    truncate_bytes,
+                    payload,
+                    u8::from(end_hour),
+                    force_flush,
+                )?;
+            }
+            if seal {
+                finalize_pending_locked(&mut state, u8::from(end_hour), force_flush)?;
+                should_flush |= force_flush;
+            }
+            should_flush
+        };
+        if should_flush {
+            self.request_flush(false, true, AsyncFlushReason::Threshold)?;
+        }
         Ok(())
     }
 
@@ -539,33 +616,7 @@ impl AppenderEngine {
         }
         let should_flush = {
             let mut state = self.state.lock().expect("state lock poisoned");
-            let threshold = async_buffer_flush_threshold(state.buffer.capacity());
-            let next_len = state
-                .buffer
-                .len()
-                .saturating_sub(truncate_bytes)
-                .saturating_add(chunk.len());
-            let should_flush = force_flush || next_len >= threshold;
-
-            state.async_pending_updates_since_persist =
-                state.async_pending_updates_since_persist.saturating_add(1);
-            let bytes_delta = chunk.len().saturating_sub(truncate_bytes);
-            state.async_pending_bytes_since_persist = state
-                .async_pending_bytes_since_persist
-                .saturating_add(bytes_delta);
-            let should_persist_mmap = should_persist_async_mmap(&state, force_flush);
-            let persist_reason = async_persist_reason(&state, force_flush);
-            state
-                .buffer
-                .append_to_pending_with_flush(truncate_bytes, chunk, end_hour, false)?;
-            if should_persist_mmap {
-                persist_async_mmap(&mut state.buffer, force_flush)?;
-                record_async_buffer_persisted(persist_reason);
-                mark_async_mmap_persisted(&mut state);
-            }
-            state.last_async_buffer_mutation_at = Instant::now();
-            record_async_buffer_len(state.buffer.len(), state.buffer.capacity());
-            should_flush
+            append_chunk_locked(&mut state, truncate_bytes, chunk, end_hour, force_flush)?
         };
 
         if should_flush {
@@ -585,22 +636,7 @@ impl AppenderEngine {
         }
         {
             let mut state = self.state.lock().expect("state lock poisoned");
-            state.async_pending_updates_since_persist =
-                state.async_pending_updates_since_persist.saturating_add(1);
-            state.async_pending_bytes_since_persist =
-                state.async_pending_bytes_since_persist.saturating_add(1);
-            let should_persist_mmap = should_persist_async_mmap(&state, force_flush);
-            let persist_reason = async_persist_reason(&state, force_flush);
-            state
-                .buffer
-                .finalize_pending_block_with_flush(end_hour, false)?;
-            if should_persist_mmap {
-                persist_async_mmap(&mut state.buffer, force_flush)?;
-                record_async_buffer_persisted(persist_reason);
-                mark_async_mmap_persisted(&mut state);
-            }
-            state.last_async_buffer_mutation_at = Instant::now();
-            record_async_buffer_len(state.buffer.len(), state.buffer.capacity());
+            finalize_pending_locked(&mut state, end_hour, force_flush)?;
         }
         if force_flush {
             self.request_flush(false, true, AsyncFlushReason::Threshold)?;
@@ -758,8 +794,6 @@ struct WorkerLoopCtx {
     rx: Receiver<EngineCommand>,
     tx: Sender<EngineCommand>,
     pending_async_flush: Arc<AtomicBool>,
-    async_flush_epoch: Arc<AtomicU64>,
-    async_flush_reason: Arc<AtomicU8>,
     async_flush_requeue_count: Arc<AtomicU64>,
     flush_timeout: Duration,
 }
@@ -770,8 +804,6 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
         rx,
         tx,
         pending_async_flush,
-        async_flush_epoch,
-        async_flush_reason,
         async_flush_requeue_count,
         flush_timeout,
     } = ctx;
@@ -783,22 +815,16 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
                 ack,
                 reason,
             }) => {
-                let flushed = if ack.is_some() {
+                if ack.is_some() {
                     pending_async_flush.store(false, Ordering::Release);
-                    state
-                        .lock()
-                        .map_err(|_| ())
-                        .and_then(|mut s| {
-                            flush_pending_locked(&mut s, move_file, false).map_err(|_| ())
-                        })
-                        .unwrap_or(false)
+                    if let Ok(mut s) = state.lock() {
+                        let _ = flush_pending_locked(&mut s, move_file, false, reason);
+                    }
                 } else {
                     match state.try_lock() {
                         Ok(mut s) => {
                             pending_async_flush.store(false, Ordering::Release);
-                            flush_pending_locked(&mut s, move_file, false)
-                                .map_err(|_| ())
-                                .unwrap_or(false)
+                            let _ = flush_pending_locked(&mut s, move_file, false, reason);
                         }
                         Err(_) => {
                             async_flush_requeue_count.fetch_add(1, Ordering::Relaxed);
@@ -811,10 +837,6 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
                             continue;
                         }
                     }
-                };
-                if flushed {
-                    async_flush_reason.store(async_flush_reason_to_u8(reason), Ordering::Release);
-                    async_flush_epoch.fetch_add(1, Ordering::AcqRel);
                 }
                 if let Some(ack) = ack {
                     let _ = ack.send(());
@@ -822,22 +844,9 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
             }
             Ok(EngineCommand::Stop { ack }) => {
                 pending_async_flush.store(false, Ordering::Release);
-                let flushed = state
-                    .lock()
-                    .map_err(|_| ())
-                    .and_then(|mut s| {
-                        let flushed = flush_pending_locked(&mut s, true, false).map_err(|_| ())?;
-                        // Housekeeping failures must not hide a completed flush.
-                        let _ = maybe_housekeep_locked(&mut s, true);
-                        Ok(flushed)
-                    })
-                    .unwrap_or(false);
-                if flushed {
-                    async_flush_reason.store(
-                        async_flush_reason_to_u8(AsyncFlushReason::Stop),
-                        Ordering::Release,
-                    );
-                    async_flush_epoch.fetch_add(1, Ordering::AcqRel);
+                if let Ok(mut s) = state.lock() {
+                    let _ = flush_pending_locked(&mut s, true, false, AsyncFlushReason::Stop);
+                    let _ = maybe_housekeep_locked(&mut s, true);
                 }
                 let _ = ack.send(());
                 break;
@@ -850,11 +859,6 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
                     .unwrap_or(false);
                 if flushed {
                     record_engine_timeout_flush();
-                    async_flush_reason.store(
-                        async_flush_reason_to_u8(AsyncFlushReason::Timeout),
-                        Ordering::Release,
-                    );
-                    async_flush_epoch.fetch_add(1, Ordering::AcqRel);
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,
@@ -862,10 +866,107 @@ fn run_worker_loop(ctx: WorkerLoopCtx) {
     }
 }
 
+fn begin_pending_locked(
+    state: &mut EngineState,
+    header: &LogHeader,
+) -> Result<(), AppenderEngineError> {
+    state.async_pending_updates_since_persist =
+        state.async_pending_updates_since_persist.saturating_add(1);
+    state.async_pending_bytes_since_persist = state
+        .async_pending_bytes_since_persist
+        .saturating_add(HEADER_LEN);
+    let should_persist_mmap = should_persist_async_mmap(state, false);
+    let persist_reason = async_persist_reason(state, false);
+    state.buffer.begin_pending_block_with_flush(header, false)?;
+    if should_persist_mmap {
+        persist_async_mmap(&mut state.buffer, false)?;
+        record_async_buffer_persisted(persist_reason);
+        mark_async_mmap_persisted(state);
+    }
+    state.last_async_buffer_mutation_at = Instant::now();
+    record_async_buffer_len(state.buffer.len(), state.buffer.capacity());
+    Ok(())
+}
+
+/// Returns whether the update crossed the flush threshold.
+fn append_chunk_locked(
+    state: &mut EngineState,
+    truncate_bytes: usize,
+    chunk: &[u8],
+    end_hour: u8,
+    force_flush: bool,
+) -> Result<bool, AppenderEngineError> {
+    let threshold = async_buffer_flush_threshold(state.buffer.capacity());
+    let next_len = state
+        .buffer
+        .len()
+        .saturating_sub(truncate_bytes)
+        .saturating_add(chunk.len());
+    let should_flush = force_flush || next_len >= threshold;
+
+    state.async_pending_updates_since_persist =
+        state.async_pending_updates_since_persist.saturating_add(1);
+    let bytes_delta = chunk.len().saturating_sub(truncate_bytes);
+    state.async_pending_bytes_since_persist = state
+        .async_pending_bytes_since_persist
+        .saturating_add(bytes_delta);
+    let should_persist_mmap = should_persist_async_mmap(state, force_flush);
+    let persist_reason = async_persist_reason(state, force_flush);
+    state
+        .buffer
+        .append_to_pending_with_flush(truncate_bytes, chunk, end_hour, false)?;
+    if should_persist_mmap {
+        persist_async_mmap(&mut state.buffer, force_flush)?;
+        record_async_buffer_persisted(persist_reason);
+        mark_async_mmap_persisted(state);
+    }
+    state.last_async_buffer_mutation_at = Instant::now();
+    record_async_buffer_len(state.buffer.len(), state.buffer.capacity());
+    Ok(should_flush)
+}
+
+fn finalize_pending_locked(
+    state: &mut EngineState,
+    end_hour: u8,
+    force_flush: bool,
+) -> Result<(), AppenderEngineError> {
+    state.async_pending_updates_since_persist =
+        state.async_pending_updates_since_persist.saturating_add(1);
+    state.async_pending_bytes_since_persist =
+        state.async_pending_bytes_since_persist.saturating_add(1);
+    let should_persist_mmap = should_persist_async_mmap(state, force_flush);
+    let persist_reason = async_persist_reason(state, force_flush);
+    state
+        .buffer
+        .finalize_pending_block_with_flush(end_hour, false)?;
+    if should_persist_mmap {
+        persist_async_mmap(&mut state.buffer, force_flush)?;
+        record_async_buffer_persisted(persist_reason);
+        mark_async_mmap_persisted(state);
+    }
+    state.last_async_buffer_mutation_at = Instant::now();
+    record_async_buffer_len(state.buffer.len(), state.buffer.capacity());
+    Ok(())
+}
+
 fn flush_pending_locked(
     state: &mut EngineState,
     move_file: bool,
     write_startup_mmap_tips: bool,
+    reason: AsyncFlushReason,
+) -> Result<bool, AppenderEngineError> {
+    let result = write_out_buffer_locked(state, move_file, write_startup_mmap_tips, reason);
+    if let Err(err) = &result {
+        report_io_error("xlog flush failed", err);
+    }
+    result
+}
+
+fn write_out_buffer_locked(
+    state: &mut EngineState,
+    move_file: bool,
+    write_startup_mmap_tips: bool,
+    reason: AsyncFlushReason,
 ) -> Result<bool, AppenderEngineError> {
     mark_async_mmap_persisted(state);
     let mut flushed = false;
@@ -873,6 +974,7 @@ fn flush_pending_locked(
         let scan = state.buffer.recovery_scan();
         if scan.valid_len == 0 {
             state.buffer.clear_used_with_flush(true)?;
+            advance_flush_epoch(state, reason);
             return Ok(false);
         }
         let keep_open = false;
@@ -921,6 +1023,7 @@ fn flush_pending_locked(
             }
         }
         state.buffer.clear_used_with_flush(true)?;
+        advance_flush_epoch(state, reason);
 
         if write_startup_mmap_tips {
             let end = format!("~~~~~ end of mmap ~~~~~{}\n", current_mark_info());
@@ -936,6 +1039,37 @@ fn flush_pending_locked(
         flushed = true;
     }
     Ok(flushed)
+}
+
+/// Print a file I/O failure to the platform console, like Mars'
+/// `__WriteTips2Console`. Otherwise these errors are only visible as missing
+/// logs. Throttled process-wide so a persistent failure cannot flood logcat.
+fn report_io_error(context: &str, err: &dyn std::fmt::Display) {
+    static LAST_REPORT: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let mut last = LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner);
+        if last.is_some_and(|at| at.elapsed() < IO_ERROR_TIP_INTERVAL) {
+            return;
+        }
+        *last = Some(Instant::now());
+    }
+    write_console_line(
+        LogLevel::Error,
+        "mars-xlog",
+        "",
+        "",
+        0,
+        &format!("{context}: {err}"),
+    );
+}
+
+/// Record that the buffer was cleared. Runs under the state lock, so a writer
+/// that holds the lock and sees its own epoch knows its block is still there.
+fn advance_flush_epoch(state: &EngineState, reason: AsyncFlushReason) {
+    state
+        .flush_reason
+        .store(async_flush_reason_to_u8(reason), Ordering::Release);
+    state.flush_epoch.fetch_add(1, Ordering::AcqRel);
 }
 
 fn should_persist_async_mmap(state: &EngineState, force_flush: bool) -> bool {
@@ -990,7 +1124,7 @@ fn handle_timeout_locked(
 ) -> Result<bool, AppenderEngineError> {
     let mut flushed = false;
     if !state.buffer.is_empty() && state.last_async_buffer_mutation_at.elapsed() >= flush_timeout {
-        flushed = flush_pending_locked(state, true, false)?;
+        flushed = flush_pending_locked(state, true, false, AsyncFlushReason::Timeout)?;
     }
     // A failed sweep must not drop the flushed flag: the caller bumps the flush
     // epoch from it, and the frontend relies on that to retire stale blocks.
@@ -999,6 +1133,14 @@ fn handle_timeout_locked(
 }
 
 fn maybe_housekeep_locked(state: &mut EngineState, force: bool) -> Result<(), AppenderEngineError> {
+    let result = housekeep_locked(state, force);
+    if let Err(err) = &result {
+        report_io_error("xlog file maintenance failed", err);
+    }
+    result
+}
+
+fn housekeep_locked(state: &mut EngineState, force: bool) -> Result<(), AppenderEngineError> {
     if force || state.last_cache_move_at.elapsed() >= CACHE_MOVE_INTERVAL {
         state
             .file_manager

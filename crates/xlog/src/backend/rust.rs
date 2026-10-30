@@ -12,7 +12,7 @@ use chrono::TimeZone;
 use crossbeam_channel::{bounded, Receiver, SendTimeoutError, Sender, TryRecvError, TrySendError};
 use crossbeam_queue::ArrayQueue;
 use mars_xlog_core::appender_engine::{
-    AppenderEngine, AsyncFlushReason as EngineAsyncFlushReason, EngineMode,
+    AppenderEngine, AppenderEngineError, AsyncFlushReason as EngineAsyncFlushReason, EngineMode,
 };
 use mars_xlog_core::buffer::{PersistentBuffer, DEFAULT_BUFFER_BLOCK_LEN};
 use mars_xlog_core::compress::{ZlibLevel, ZstdLevel};
@@ -204,6 +204,14 @@ impl Drop for CheckedOutAsyncState<'_> {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum FrameAppend {
+    Appended,
+    /// A flush wrote the block out before this update; nothing was stored.
+    Stale,
+    Failed,
+}
+
 fn push_frame_line(
     writer: &mut FrameWriter,
     engine: &AppenderEngine,
@@ -211,13 +219,76 @@ fn push_frame_line(
     encoded: &mut Vec<u8>,
     end_hour: Hour,
     force_flush: bool,
-) -> bool {
+) -> FrameAppend {
     let Ok(truncate) = writer.push_line(chunk, end_hour, encoded) else {
+        return FrameAppend::Failed;
+    };
+    match engine.append_async_block(
+        writer.flush_epoch(),
+        truncate,
+        encoded,
+        end_hour,
+        false,
+        force_flush,
+    ) {
+        Ok(()) => FrameAppend::Appended,
+        Err(AppenderEngineError::StaleBlock) => FrameAppend::Stale,
+        Err(_) => FrameAppend::Failed,
+    }
+}
+
+/// Push `line` into the open block. When a concurrent flush already wrote
+/// that block out, start a new block and push the line there instead of
+/// dropping it; the old writer's compressor state is discarded with it.
+#[allow(clippy::too_many_arguments)]
+fn push_line_or_reopen(
+    pending: &mut Option<FrameWriter>,
+    config: &XlogConfig,
+    cipher: Crypt,
+    engine: &AppenderEngine,
+    line: &[u8],
+    encoded: &mut Vec<u8>,
+    hour: u8,
+    force_flush: bool,
+) -> bool {
+    let Some(writer) = pending.as_mut() else {
         return false;
     };
-    engine
-        .write_async_parts(None, truncate, encoded, end_hour, false, force_flush)
-        .is_ok()
+    match push_frame_line(
+        writer,
+        engine,
+        line,
+        encoded,
+        hour_from_clock(hour),
+        force_flush,
+    ) {
+        FrameAppend::Appended => true,
+        FrameAppend::Failed => false,
+        FrameAppend::Stale => {
+            *pending = None;
+            if !ensure_async_open(
+                pending,
+                config,
+                cipher,
+                engine,
+                hour,
+                engine.async_flush_epoch(),
+            ) {
+                return false;
+            }
+            let Some(writer) = pending.as_mut() else {
+                return false;
+            };
+            push_frame_line(
+                writer,
+                engine,
+                line,
+                encoded,
+                hour_from_clock(hour),
+                force_flush,
+            ) == FrameAppend::Appended
+        }
+    }
 }
 
 fn finish_frame(
@@ -230,9 +301,20 @@ fn finish_frame(
     let Ok(truncate) = writer.finish(end_hour, encoded) else {
         return false;
     };
-    engine
-        .write_async_parts(None, truncate, encoded, end_hour, true, force_flush)
-        .is_ok()
+    match engine.append_async_block(
+        writer.flush_epoch(),
+        truncate,
+        encoded,
+        end_hour,
+        true,
+        force_flush,
+    ) {
+        Ok(()) => true,
+        // The flush already wrote this block out with a repaired end marker,
+        // so there is nothing left to seal.
+        Err(AppenderEngineError::StaleBlock) => true,
+        Err(_) => false,
+    }
 }
 
 impl AsyncFlushControlReason {
@@ -359,6 +441,7 @@ const ASYNC_FRONTEND_BLOCK_SEND_TIMEOUT: Duration = Duration::from_millis(100);
 // Sync flush is called from crash handlers and the main thread.
 const ASYNC_SYNC_FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 const ASYNC_FRONTEND_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+const STARTUP_INFO_PREFIX: &str = "~~~~~ mars-xlog-rs ";
 const ASYNC_QUEUE_FULL_DROPPED_PREFIX: &str =
     "[W][ xlog async frontend queue full, dropped lines: ";
 // Keep the historical BUFFER_BLOCK_LENTH typo for compatibility with
@@ -861,7 +944,7 @@ fn handle_async_frontend_write(
         }
     }
 
-    let Some(state) = pending.as_mut() else {
+    let Some(state) = pending.as_ref() else {
         return;
     };
 
@@ -877,12 +960,14 @@ fn handle_async_frontend_write(
     let line = warning_line.as_deref().unwrap_or(cmd.line.as_str());
 
     let append_begin = profile_enabled.then(Instant::now);
-    let appended = push_frame_line(
-        state,
+    let appended = push_line_or_reopen(
+        pending,
+        config,
+        *cipher,
         engine,
         line.as_bytes(),
         compress_scratch,
-        hour_from_clock(cmd.now_hour),
+        cmd.now_hour,
         cmd.force_flush,
     );
     if let Some(begin) = append_begin {
@@ -961,9 +1046,13 @@ fn open_async_writer(
     let Ok(header) = writer.open(hour, seq, flush_epoch) else {
         return false;
     };
-    engine
-        .write_async_parts(Some(&header), 0, &[], hour, false, false)
-        .is_ok()
+    match engine.begin_async_block(&header) {
+        Ok(epoch) => {
+            writer.set_flush_epoch(epoch);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn ensure_async_open(
@@ -1114,11 +1203,27 @@ impl RustBackend {
             cache_days,
         )
         .map_err(|_| XlogError::InitFailed)?;
-        let buffer = PersistentBuffer::open_with_capacity(
-            file_manager.mmap_path(),
-            DEFAULT_BUFFER_BLOCK_LEN,
-        )
-        .map_err(|_| XlogError::InitFailed)?;
+        let mmap_path = file_manager.mmap_path();
+        let buffer =
+            match PersistentBuffer::open_with_capacity(&mmap_path, DEFAULT_BUFFER_BLOCK_LEN) {
+                Ok(buffer) => buffer,
+                // Match Mars: when the mmap file cannot be used (for example on a
+                // full disk), buffer in memory instead of disabling file logging.
+                // Only crash recovery of the unflushed tail is lost.
+                Err(err) => {
+                    write_console_line(
+                        CoreLogLevel::Error,
+                        "mars-xlog",
+                        "",
+                        "",
+                        0,
+                        &format!("open mmap failed, buffering in memory: {err}"),
+                    );
+                    PersistentBuffer::open_in_memory(mmap_path, DEFAULT_BUFFER_BLOCK_LEN)
+                        .map_err(|_| XlogError::InitFailed)?
+                }
+            };
+        let use_mmap = buffer.is_persistent();
 
         let engine = Arc::new(
             AppenderEngine::try_new(
@@ -1133,7 +1238,7 @@ impl RustBackend {
         let async_frontend = AsyncFrontend::new(Arc::clone(&engine), config.clone(), cipher)?;
         async_frontend.set_accepting(config.mode == AppenderMode::Async);
 
-        Ok(Self {
+        let backend = Self {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             console_open: AtomicBool::new(false),
             level: AtomicI32::new(level_to_i32(level)),
@@ -1144,7 +1249,41 @@ impl RustBackend {
             async_frontend,
             async_state: Mutex::new(AsyncStateSlot::empty()),
             async_state_ready: Condvar::new(),
-        })
+        };
+        backend.write_startup_info(use_mmap);
+        Ok(backend)
+    }
+
+    /// Write one diagnostics line at open, like the startup lines Mars writes
+    /// ("log appender mode:%d, use mmap:%d" and directory space info). It
+    /// bypasses the level filter so it is always present in exported logs.
+    fn write_startup_info(&self, use_mmap: bool) {
+        let mode = match self.config.mode {
+            AppenderMode::Async => 0,
+            AppenderMode::Sync => 1,
+        };
+        let mut info = format!(
+            "{STARTUP_INFO_PREFIX}{}, log appender mode:{mode}, use mmap:{}",
+            env!("CARGO_PKG_VERSION"),
+            u8::from(use_mmap)
+        );
+        let dirs = [
+            ("log dir", Some(self.engine.log_dir())),
+            ("cache dir", self.engine.cache_dir()),
+        ];
+        for (label, dir) in dirs {
+            if let Some(available) = dir.and_then(|dir| fs2::available_space(dir).ok()) {
+                let _ = write!(info, ", {label} available:{}MB", available / (1024 * 1024));
+            }
+        }
+        info.push_str(" ~~~~~\n");
+
+        let hour = local_hour_from_timestamp(SystemTime::now());
+        let mut block = Vec::new();
+        if build_sync_block_from_formatted_line(&self.config, &self.cipher, hour, &info, &mut block)
+        {
+            let _ = self.engine.write_sealed(&block, false);
+        }
     }
 
     fn checkout_async_state(&self, profile_enabled: bool) -> CheckedOutAsyncState<'_> {
@@ -1511,7 +1650,7 @@ impl RustBackend {
                         stage.begin_pending_ns = begin.elapsed().as_nanos() as u64;
                     }
                 }
-                let Some(state) = checked_out.pending_mut() else {
+                let Some(state) = checked_out.pending() else {
                     return;
                 };
 
@@ -1531,12 +1670,14 @@ impl RustBackend {
                 } else {
                     None
                 };
-                let appended = push_frame_line(
-                    state,
+                let appended = push_line_or_reopen(
+                    &mut checked_out.pending,
+                    &self.config,
+                    self.cipher,
                     &self.engine,
                     scratch.line.as_bytes(),
                     &mut scratch.compress,
-                    hour_from_clock(now_hour),
+                    now_hour,
                     event.level == LogLevel::Fatal,
                 );
                 if let Some(begin) = append_begin {
@@ -2033,7 +2174,19 @@ mod tests {
         merged
     }
 
+    /// Drop the diagnostics block every instance writes at open.
+    fn skip_startup_info(bytes: &[u8]) -> &[u8] {
+        let header = LogHeader::decode(&bytes[..HEADER_LEN]).unwrap();
+        let end = HEADER_LEN + header.len as usize;
+        if bytes[HEADER_LEN..end].starts_with(super::STARTUP_INFO_PREFIX.as_bytes()) {
+            &bytes[end + TAILER_LEN..]
+        } else {
+            bytes
+        }
+    }
+
     fn parse_block_payload(block: &[u8]) -> (LogHeader, &[u8]) {
+        let block = skip_startup_info(block);
         let header = LogHeader::decode(&block[..HEADER_LEN]).unwrap();
         let payload_len = header.len as usize;
         let payload_start = HEADER_LEN;

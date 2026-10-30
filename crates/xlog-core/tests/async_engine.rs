@@ -455,3 +455,66 @@ fn sync_mode_hides_async_buffer_observability_apis() {
     assert!(engine.async_buffer_stats().is_none());
     assert!(engine.async_buffer_snapshot().is_none());
 }
+
+#[test]
+fn append_async_block_rejects_a_block_flushed_in_between() {
+    // The frontend reads the flush epoch before appending. A flush that runs
+    // in between used to clear the buffer and make the append fail, which
+    // silently dropped that log line.
+    let dir = tempfile::tempdir().unwrap();
+    let manager = FileManager::new(dir.path(), None, "stale", CacheDays::ZERO).unwrap();
+    let buffer =
+        PersistentBuffer::open_with_capacity(manager.mmap_path(), DEFAULT_BUFFER_BLOCK_LEN)
+            .unwrap();
+    let engine = AppenderEngine::new(manager, buffer, EngineMode::Async, 0, 10 * 24 * 60 * 60);
+
+    let epoch = engine.begin_async_block(&make_pending_header(1)).unwrap();
+    engine
+        .append_async_block(epoch, 0, b"first", hour(1), false, false)
+        .unwrap();
+    engine.flush(true).unwrap();
+    assert_ne!(engine.async_flush_epoch(), epoch);
+
+    let before = engine.async_buffer_snapshot().unwrap();
+    assert!(matches!(
+        engine.append_async_block(epoch, 0, b"second", hour(1), false, false),
+        Err(AppenderEngineError::StaleBlock)
+    ));
+    assert_eq!(engine.async_buffer_snapshot().unwrap(), before);
+
+    // Retrying in a fresh block keeps the line.
+    let epoch = engine.begin_async_block(&make_pending_header(2)).unwrap();
+    engine
+        .append_async_block(epoch, 0, b"second", hour(1), true, false)
+        .unwrap();
+    engine.flush(true).unwrap();
+
+    let payloads = parse_payloads(&merged_xlog_bytes(dir.path()));
+    assert!(payloads.iter().any(|payload| payload == "first"));
+    assert!(payloads.iter().any(|payload| payload == "second"));
+}
+
+#[test]
+fn begin_async_block_writes_out_unflushed_bytes_instead_of_overwriting() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = FileManager::new(dir.path(), None, "leftover", CacheDays::ZERO).unwrap();
+    let buffer =
+        PersistentBuffer::open_with_capacity(manager.mmap_path(), DEFAULT_BUFFER_BLOCK_LEN)
+            .unwrap();
+    let engine = AppenderEngine::new(manager, buffer, EngineMode::Async, 0, 10 * 24 * 60 * 60);
+
+    let epoch = engine.begin_async_block(&make_pending_header(1)).unwrap();
+    engine
+        .append_async_block(epoch, 0, b"sealed-not-flushed", hour(1), true, false)
+        .unwrap();
+
+    // A new block starts at offset 0; the sealed block must reach the file.
+    let next = engine.begin_async_block(&make_pending_header(2)).unwrap();
+    assert_ne!(next, epoch);
+    assert_eq!(engine.async_buffer_snapshot().unwrap().len(), HEADER_LEN);
+
+    let payloads = parse_payloads(&merged_xlog_bytes(dir.path()));
+    assert!(payloads
+        .iter()
+        .any(|payload| payload == "sealed-not-flushed"));
+}

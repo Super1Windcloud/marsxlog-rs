@@ -32,9 +32,17 @@ pub enum MmapStoreError {
 }
 
 /// Thin wrapper around a fixed-size mutable file-backed memory map.
+///
+/// [`Self::in_memory`] provides the same interface over a heap buffer for
+/// when the mmap file cannot be used.
 pub struct MmapStore {
     path: PathBuf,
-    mmap: MmapMut,
+    backing: Backing,
+}
+
+enum Backing {
+    Mapped(MmapMut),
+    Heap(Box<[u8]>),
 }
 
 impl MmapStore {
@@ -82,7 +90,29 @@ impl MmapStore {
             MmapMut::map_mut(&file).map_err(|e| MmapStoreError::MapFile(path.clone(), e))?
         };
 
-        Ok(Self { path, mmap })
+        Ok(Self {
+            path,
+            backing: Backing::Mapped(mmap),
+        })
+    }
+
+    /// Create a zeroed heap buffer with the mmap interface.
+    ///
+    /// Nothing is written to `path`; it is kept only for diagnostics. Contents
+    /// do not survive a process crash and flushes are no-ops.
+    pub fn in_memory(path: impl Into<PathBuf>, capacity: usize) -> Result<Self, MmapStoreError> {
+        if capacity == 0 {
+            return Err(MmapStoreError::InvalidCapacity(capacity));
+        }
+        Ok(Self {
+            path: path.into(),
+            backing: Backing::Heap(vec![0; capacity].into_boxed_slice()),
+        })
+    }
+
+    /// Return `true` when the store is backed by the mmap file.
+    pub fn is_mapped(&self) -> bool {
+        matches!(self.backing, Backing::Mapped(_))
     }
 
     /// Return the on-disk path backing this mmap.
@@ -92,36 +122,48 @@ impl MmapStore {
 
     /// Return the mmap length in bytes.
     pub fn len(&self) -> usize {
-        self.mmap.len()
+        self.as_slice().len()
     }
 
     /// Return `true` when the mmap length is zero.
     pub fn is_empty(&self) -> bool {
-        self.mmap.is_empty()
+        self.as_slice().is_empty()
     }
 
     /// Borrow the full mmap as an immutable byte slice.
     pub fn as_slice(&self) -> &[u8] {
-        &self.mmap
+        match &self.backing {
+            Backing::Mapped(mmap) => mmap,
+            Backing::Heap(bytes) => bytes,
+        }
     }
 
     /// Borrow the full mmap as a mutable byte slice.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.mmap
+        match &mut self.backing {
+            Backing::Mapped(mmap) => mmap,
+            Backing::Heap(bytes) => bytes,
+        }
     }
 
     /// Flush pending mmap mutations to the backing file.
     pub fn flush(&mut self) -> Result<(), MmapStoreError> {
-        self.mmap
-            .flush()
-            .map_err(|e| MmapStoreError::Flush(self.path.clone(), e))
+        match &self.backing {
+            Backing::Mapped(mmap) => mmap
+                .flush()
+                .map_err(|e| MmapStoreError::Flush(self.path.clone(), e)),
+            Backing::Heap(_) => Ok(()),
+        }
     }
 
     /// Schedule write-back of pending mmap mutations without waiting.
     pub fn flush_async(&mut self) -> Result<(), MmapStoreError> {
-        self.mmap
-            .flush_async()
-            .map_err(|e| MmapStoreError::Flush(self.path.clone(), e))
+        match &self.backing {
+            Backing::Mapped(mmap) => mmap
+                .flush_async()
+                .map_err(|e| MmapStoreError::Flush(self.path.clone(), e)),
+            Backing::Heap(_) => Ok(()),
+        }
     }
 }
 

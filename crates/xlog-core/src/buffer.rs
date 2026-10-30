@@ -103,6 +103,24 @@ impl PersistentBuffer {
         Ok(Self { store, len })
     }
 
+    /// Create an empty heap-backed buffer for when the mmap file at `path`
+    /// cannot be used (for example on a full disk).
+    ///
+    /// Matches Mars, which falls back to a heap buffer instead of disabling
+    /// logging. Buffered bytes are lost if the process dies before a flush.
+    pub fn open_in_memory(path: impl Into<PathBuf>, capacity: usize) -> Result<Self, BufferError> {
+        Ok(Self {
+            store: MmapStore::in_memory(path, capacity)?,
+            len: 0,
+        })
+    }
+
+    /// Return `true` when the buffer is backed by the mmap file and survives
+    /// a process crash.
+    pub fn is_persistent(&self) -> bool {
+        self.store.is_mapped()
+    }
+
     /// Return the on-disk path of the mmap file.
     pub fn path(&self) -> &Path {
         self.store.path()
