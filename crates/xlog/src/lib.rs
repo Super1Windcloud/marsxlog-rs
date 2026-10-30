@@ -245,6 +245,13 @@ pub struct XlogConfig {
     pub compress_mode: CompressMode,
     /// Compression level forwarded to the compressor.
     pub compress_level: i32,
+    /// Max size in bytes of a single log file before rotating to the next
+    /// `_N` segment (0 disables splitting).
+    ///
+    /// Set it here rather than through [`Xlog::set_max_file_size`] after init:
+    /// init already flushes recovered mmap data, and with splitting disabled
+    /// that data lands in the unsuffixed file and restarts the `_N` sequence.
+    pub max_file_size: u64,
 }
 
 impl XlogConfig {
@@ -259,6 +266,7 @@ impl XlogConfig {
             mode: AppenderMode::Async,
             compress_mode: CompressMode::Zlib,
             compress_level: 6,
+            max_file_size: 0,
         }
     }
 
@@ -295,6 +303,12 @@ impl XlogConfig {
     /// Set the compression level forwarded to the compressor.
     pub fn compress_level(mut self, level: i32) -> Self {
         self.compress_level = level;
+        self
+    }
+
+    /// Set the max size of a single log file in bytes (0 disables splitting).
+    pub fn max_file_size(mut self, max_bytes: u64) -> Self {
+        self.max_file_size = max_bytes;
         self
     }
 }
@@ -790,6 +804,36 @@ mod tests {
         assert!(text.starts_with(STARTUP_INFO_PREFIX), "{text}");
         assert!(text.contains("log appender mode:1, use mmap:1"), "{text}");
         assert!(text.contains("log dir available:"), "{text}");
+    }
+
+    #[test]
+    fn max_file_size_in_config_continues_the_latest_segment_after_restart() {
+        // Device regression: with splitting enabled only after init, a restarted
+        // process wrote into the unsuffixed file and restarted the `_N` sequence.
+        let dir = TempDir::new().expect("tempdir");
+        let prefix = unique_prefix("restart-segment");
+        let day = chrono::Local::now().format("%Y%m%d").to_string();
+        let latest = dir.path().join(format!("{prefix}_{day}_5.xlog"));
+        fs::write(
+            dir.path().join(format!("{prefix}_{day}_4.xlog")),
+            vec![0u8; 64],
+        )
+        .unwrap();
+        fs::write(&latest, vec![0u8; 64]).unwrap();
+
+        let cfg = XlogConfig::new(dir.path().to_string_lossy(), &prefix)
+            .mode(AppenderMode::Async)
+            .compress_level(6)
+            .max_file_size(1024 * 1024);
+        let logger = Xlog::init(cfg, LogLevel::Info).expect("init");
+        logger.write(LogLevel::Info, Some("tag"), "after-restart");
+        logger.flush(true);
+
+        assert!(
+            !dir.path().join(format!("{prefix}_{day}.xlog")).exists(),
+            "must not restart at the unsuffixed segment"
+        );
+        assert!(fs::metadata(&latest).unwrap().len() > 64, "appended to _5");
     }
 
     #[test]

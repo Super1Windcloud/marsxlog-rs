@@ -154,32 +154,101 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCreat
     level: jint,
 ) -> jlong {
     ffi_guard(0, || {
-        let log_dir = req_string(&mut env, log_dir);
-        let name_prefix = req_string(&mut env, name_prefix);
-        let pub_key = opt_string(&mut env, pub_key);
-        let cache_dir = opt_string(&mut env, cache_dir);
-
-        let mut cfg = XlogConfig::new(log_dir, name_prefix)
-            .cache_days(cache_days)
-            .mode(to_appender_mode(mode))
-            .compress_mode(to_compress_mode(compress_mode))
-            .compress_level(compress_level);
-        if let Some(key) = pub_key {
-            if !key.is_empty() {
-                cfg = cfg.pub_key(key);
-            }
-        }
-        if let Some(dir) = cache_dir {
-            if !dir.is_empty() {
-                cfg = cfg.cache_dir(dir);
-            }
-        }
-
-        match Xlog::init(cfg, to_log_level(level)) {
-            Ok(logger) => insert_logger(logger) as jlong,
-            Err(_) => 0,
-        }
+        create_logger(
+            &mut env,
+            log_dir,
+            name_prefix,
+            pub_key,
+            cache_dir,
+            cache_days,
+            mode,
+            compress_mode,
+            compress_level,
+            level,
+            0,
+        )
     })
+}
+
+#[no_mangle]
+/// Create a logger with file splitting configured from the start.
+///
+/// Prefer this over `nativeCreateLogger` + `nativeSetMaxFileSize`: init
+/// already flushes recovered mmap data, and without a max file size that data
+/// lands in the unsuffixed file and restarts the `_N` segment sequence. A
+/// separate symbol (instead of a new parameter) makes a Java/.so version
+/// mismatch fail with `UnsatisfiedLinkError` rather than misread arguments.
+pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCreateLoggerWithMaxFileSize(
+    mut env: JNIEnv,
+    _class: JClass,
+    log_dir: JString,
+    name_prefix: JString,
+    pub_key: JString,
+    cache_dir: JString,
+    cache_days: jint,
+    mode: jint,
+    compress_mode: jint,
+    compress_level: jint,
+    level: jint,
+    max_file_size: jlong,
+) -> jlong {
+    ffi_guard(0, || {
+        create_logger(
+            &mut env,
+            log_dir,
+            name_prefix,
+            pub_key,
+            cache_dir,
+            cache_days,
+            mode,
+            compress_mode,
+            compress_level,
+            level,
+            max_file_size.max(0) as u64,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_logger(
+    env: &mut JNIEnv,
+    log_dir: JString,
+    name_prefix: JString,
+    pub_key: JString,
+    cache_dir: JString,
+    cache_days: jint,
+    mode: jint,
+    compress_mode: jint,
+    compress_level: jint,
+    level: jint,
+    max_file_size: u64,
+) -> jlong {
+    let log_dir = req_string(env, log_dir);
+    let name_prefix = req_string(env, name_prefix);
+    let pub_key = opt_string(env, pub_key);
+    let cache_dir = opt_string(env, cache_dir);
+
+    let mut cfg = XlogConfig::new(log_dir, name_prefix)
+        .cache_days(cache_days)
+        .mode(to_appender_mode(mode))
+        .compress_mode(to_compress_mode(compress_mode))
+        .compress_level(compress_level)
+        .max_file_size(max_file_size);
+    if let Some(key) = pub_key {
+        if !key.is_empty() {
+            cfg = cfg.pub_key(key);
+        }
+    }
+    if let Some(dir) = cache_dir {
+        if !dir.is_empty() {
+            cfg = cfg.cache_dir(dir);
+        }
+    }
+
+    match Xlog::init(cfg, to_log_level(level)) {
+        Ok(logger) => insert_logger(logger) as jlong,
+        Err(_) => 0,
+    }
 }
 
 #[no_mangle]

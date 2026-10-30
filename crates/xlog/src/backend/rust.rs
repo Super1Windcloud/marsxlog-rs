@@ -1230,7 +1230,7 @@ impl RustBackend {
                 file_manager,
                 buffer,
                 appender_to_engine_mode(config.mode),
-                0,
+                config.max_file_size,
                 10 * 24 * 60 * 60,
             )
             .map_err(|_| XlogError::InitFailed)?,
