@@ -120,7 +120,7 @@ pub fn decode_xlog(
     let mut last_seq = 0u16;
 
     loop {
-        if offset >= input.len() {
+        if offset >= input.len() || is_zero_padding(&input[offset..]) {
             break;
         }
 
@@ -299,7 +299,7 @@ fn header_lengths_for_magic(magic: u8) -> Option<(usize, usize)> {
 }
 
 fn is_good_log_buffer(input: &[u8], offset: usize, count: usize) -> bool {
-    if offset == input.len() {
+    if offset == input.len() || is_zero_padding(&input[offset..]) {
         return true;
     }
     if count == 0 {
@@ -321,6 +321,13 @@ fn is_good_log_buffer(input: &[u8], offset: usize, count: usize) -> bool {
         return true;
     }
     is_good_log_buffer(input, payload_end + 1, count - 1)
+}
+
+/// A live `.mmap3` snapshot is its blocks followed by the zero-filled rest of
+/// the mapping. No block starts with a zero byte, so zero fill ends the log
+/// the same way end of file does.
+fn is_zero_padding(rest: &[u8]) -> bool {
+    rest.iter().all(|&byte| byte == 0)
 }
 
 fn find_log_start(input: &[u8], count: usize) -> Option<usize> {

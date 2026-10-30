@@ -250,21 +250,16 @@ fn process_zip(
         .into_iter()
         .filter_map(|e| e.ok())
     {
-        if entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("xlog"))
-        {
+        if entry.file_type().is_file() && is_log_input(entry.path()) {
             xlog_files.push(entry.into_path());
         }
     }
     xlog_files.sort();
 
-    println!("Found {} .xlog file(s) to decode:", xlog_files.len());
+    println!("Found {} log file(s) to decode:", xlog_files.len());
     let mut success_count = 0;
     for xlog_file in &xlog_files {
-        let log_file = xlog_file.with_extension("log");
+        let log_file = decoded_log_path(xlog_file);
         let rel_path = xlog_file.strip_prefix(&target_dir).unwrap_or(xlog_file);
         print!("• {}: ", rel_path.display());
         match decode_single_xlog(xlog_file, &log_file, key) {
@@ -275,7 +270,7 @@ fn process_zip(
                     bytes
                 );
                 success_count += 1;
-                if clean {
+                if clean && !is_mmap_snapshot(xlog_file) {
                     let _ = fs::remove_file(xlog_file);
                 }
             }
@@ -316,37 +311,35 @@ fn process_directory(
         .into_iter()
         .filter_map(|e| e.ok())
     {
-        if entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("xlog"))
-        {
+        if entry.file_type().is_file() && is_log_input(entry.path()) {
             xlog_files.push(entry.into_path());
         }
     }
     xlog_files.sort();
 
     if xlog_files.is_empty() {
-        println!("No .xlog files found in directory: {}", dir_path.display());
+        println!(
+            "No .xlog or .mmap3 files found in directory: {}",
+            dir_path.display()
+        );
         return Ok(());
     }
 
     println!("\n📂 Processing directory: {}", dir_path.display());
-    println!("Found {} .xlog file(s) to decode:\n", xlog_files.len());
+    println!("Found {} log file(s) to decode:\n", xlog_files.len());
 
     let mut success_count = 0;
     for xlog_file in &xlog_files {
         let rel_path = xlog_file.strip_prefix(dir_path).unwrap_or(xlog_file);
         let log_file = match output_dir {
             Some(out_dir) if out_dir != dir_path => {
-                let target = out_dir.join(rel_path).with_extension("log");
+                let target = decoded_log_path(&out_dir.join(rel_path));
                 if let Some(p) = target.parent() {
                     let _ = fs::create_dir_all(p);
                 }
                 target
             }
-            _ => xlog_file.with_extension("log"),
+            _ => decoded_log_path(xlog_file),
         };
 
         print!("• {}: ", rel_path.display());
@@ -358,7 +351,7 @@ fn process_directory(
                     bytes
                 );
                 success_count += 1;
-                if clean {
+                if clean && !is_mmap_snapshot(xlog_file) {
                     let _ = fs::remove_file(xlog_file);
                 }
             }
@@ -376,6 +369,30 @@ fn process_directory(
     Ok(())
 }
 
+/// Rolled `.xlog` files and live `.mmap3` snapshots. Feedback packages carry
+/// the snapshots for logs a process had not flushed yet (for example the game
+/// process, which skips the flush when it crashes).
+fn is_log_input(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("xlog") || ext.eq_ignore_ascii_case("mmap3"))
+}
+
+fn is_mmap_snapshot(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mmap3"))
+}
+
+/// `main.mmap3` decodes to `main.mmap3.log` so it is not mistaken for a
+/// rolled log file. `--clean` never removes the snapshot: it is the crash
+/// recovery source.
+fn decoded_log_path(input: &Path) -> PathBuf {
+    if is_mmap_snapshot(input) {
+        input.with_extension("mmap3.log")
+    } else {
+        input.with_extension("log")
+    }
+}
+
 fn process_single_file(
     input: &Path,
     output: Option<&Path>,
@@ -385,19 +402,18 @@ fn process_single_file(
     let output_path = match output {
         Some(out) => {
             if out.is_dir() {
-                out.join(input.file_name().unwrap_or_default())
-                    .with_extension("log")
+                decoded_log_path(&out.join(input.file_name().unwrap_or_default()))
             } else {
                 out.to_path_buf()
             }
         }
-        None => input.with_extension("log"),
+        None => decoded_log_path(input),
     };
 
     print!("• {}: ", input.display());
     let bytes = decode_single_xlog(input, &output_path, key)?;
     println!("[OK] -> {} ({} bytes)", output_path.display(), bytes);
-    if clean {
+    if clean && !is_mmap_snapshot(input) {
         let _ = fs::remove_file(input);
     }
     Ok(())
@@ -491,6 +507,42 @@ mod tests {
         bytes.extend_from_slice(&zlib_payload);
         bytes.push(0);
         bytes
+    }
+
+    /// Shape of a live `.mmap3` snapshot: the pending block followed by the
+    /// zero-filled rest of the 150 KB mapping.
+    fn make_test_mmap_bytes(content: &[u8]) -> Vec<u8> {
+        let mut bytes = make_test_xlog_bytes(content);
+        bytes.resize(150 * 1024, 0);
+        bytes
+    }
+
+    #[test]
+    fn decodes_mmap_snapshot_with_zero_padding() {
+        let dir = tempdir().unwrap();
+        let mmap_path = dir.path().join("main.mmap3");
+        fs::write(&mmap_path, make_test_mmap_bytes(b"line before crash\n")).unwrap();
+
+        process_single_file(&mmap_path, None, None, false).unwrap();
+
+        let decoded = fs::read_to_string(dir.path().join("main.mmap3.log")).unwrap();
+        assert!(decoded.contains("line before crash"), "{decoded}");
+    }
+
+    #[test]
+    fn directory_decode_includes_mmap_snapshots_and_keeps_them_on_clean() {
+        let dir = tempdir().unwrap();
+        let cache = dir.path().join("xlog_cache").join("game");
+        fs::create_dir_all(&cache).unwrap();
+        let mmap_path = cache.join("game.mmap3");
+        fs::write(&mmap_path, make_test_mmap_bytes(b"game tail\n")).unwrap();
+
+        process_directory(dir.path(), None, None, true).unwrap();
+
+        let decoded = fs::read_to_string(cache.join("game.mmap3.log")).unwrap();
+        assert!(decoded.contains("game tail"), "{decoded}");
+        // The mmap is the crash-recovery source; --clean must not remove it.
+        assert!(mmap_path.exists());
     }
 
     #[test]
