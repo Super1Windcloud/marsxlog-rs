@@ -8,7 +8,6 @@
 mod active_append;
 
 pub use appender_engine::AppenderEngine;
-pub use decoder::decode_xlog;
 pub use frame::FrameWriter;
 pub use protocol::BlockMagic;
 /// Append engine, flush control, and async pending-block primitives.
@@ -19,8 +18,6 @@ pub mod buffer;
 pub mod compress;
 /// ECDH+TEA encryption helpers.
 pub mod crypto;
-/// Xlog file decoder for Mars-compatible log files.
-pub mod decoder;
 /// Human-readable dump utilities for log buffers.
 pub mod dump;
 mod file_maintenance;
