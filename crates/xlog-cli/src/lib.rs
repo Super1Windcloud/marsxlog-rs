@@ -8,7 +8,9 @@ use rand_core::OsRng;
 use thiserror::Error;
 
 pub mod core;
-pub use crate::core::decoder::{decode_xlog, parse_private_key_hex, DecodeError, DecodeOptions, DecodeSummary};
+pub use crate::core::decoder::{
+    decode_xlog, parse_private_key_hex, DecodeError, DecodeOptions, DecodeSummary,
+};
 
 #[derive(Debug, Parser)]
 #[command(
