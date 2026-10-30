@@ -932,6 +932,43 @@ mod tests {
     }
 
     #[test]
+    fn startup_continues_highest_segment_when_it_is_the_newest() {
+        let root = tempfile::tempdir().unwrap();
+        let log_dir = root.path().join("log");
+        let manager = FileManager::new(log_dir.clone(), None, "demo", CacheDays::ZERO).unwrap();
+        let day = day_key(Local::now());
+        let older = build_path_for_index(&log_dir, "demo", day, 4);
+        let newest = build_path_for_index(&log_dir, "demo", day, 5);
+        fs::write(&older, b"old").unwrap();
+        fs::write(&newest, b"new").unwrap();
+        set_file_mtime(&older, FileTime::from_unix_time(1_000, 0)).unwrap();
+        set_file_mtime(&newest, FileTime::from_unix_time(2_000, 0)).unwrap();
+
+        let next = manager.select_append_path(Local::now(), &log_dir, "demo", 1024);
+        assert_eq!(next, newest);
+    }
+
+    #[test]
+    fn startup_opens_a_new_segment_when_a_lower_index_is_newer() {
+        // Device state left by the old sequence restart: `_15` is an earlier
+        // session while the latest data sits in `_5`. Appending to `_15`
+        // would mix sessions inside one file.
+        let root = tempfile::tempdir().unwrap();
+        let log_dir = root.path().join("log");
+        let manager = FileManager::new(log_dir.clone(), None, "demo", CacheDays::ZERO).unwrap();
+        let day = day_key(Local::now());
+        let highest = build_path_for_index(&log_dir, "demo", day, 15);
+        let latest = build_path_for_index(&log_dir, "demo", day, 5);
+        fs::write(&highest, b"earlier session").unwrap();
+        fs::write(&latest, b"latest session").unwrap();
+        set_file_mtime(&highest, FileTime::from_unix_time(1_000, 0)).unwrap();
+        set_file_mtime(&latest, FileTime::from_unix_time(2_000, 0)).unwrap();
+
+        let next = manager.select_append_path(Local::now(), &log_dir, "demo", 1024);
+        assert_eq!(next, build_path_for_index(&log_dir, "demo", day, 16));
+    }
+
+    #[test]
     fn cached_target_advances_to_next_split_file_without_rescan() {
         let root = tempfile::tempdir().unwrap();
         let log_dir = root.path().join("log");

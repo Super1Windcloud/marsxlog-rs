@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use std::time::SystemTime;
 
 use chrono::Local;
 
@@ -89,10 +90,33 @@ fn next_file_index_state(
             merged_size = merged_size.saturating_add(meta.len());
         }
     }
-    if merged_size > max_file_size {
+    // Only keep appending to the highest segment if it is also the most
+    // recently written one. Otherwise the sequence restarted earlier (older
+    // releases began at `_0` after every restart) and the highest index holds
+    // an earlier session; open the next index rather than mixing sessions.
+    let last_modified = newest_mtime(log_dir, cache_dir, last);
+    let lower_index_is_newer = names.iter().skip(1).any(|name| {
+        newest_mtime(log_dir, cache_dir, name)
+            .zip(last_modified)
+            .is_some_and(|(other, last)| other > last)
+    });
+    if merged_size > max_file_size || lower_index_is_newer {
         (idx + 1, 0)
     } else {
         (idx, merged_size)
+    }
+}
+
+/// Latest modification time of `name` across the log and cache directories.
+fn newest_mtime(log_dir: &Path, cache_dir: Option<&Path>, name: &str) -> Option<SystemTime> {
+    let mtime = |dir: &Path| {
+        fs::metadata(dir.join(name))
+            .and_then(|meta| meta.modified())
+            .ok()
+    };
+    match (mtime(log_dir), cache_dir.and_then(mtime)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
     }
 }
 
