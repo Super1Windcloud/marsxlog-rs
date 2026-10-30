@@ -229,6 +229,26 @@ mod tests {
     }
 
     #[test]
+    fn zlib_stream_decodes_sync_flushed_chunks_without_final_block() {
+        // Async blocks flushed at the buffer threshold, or recovered from the
+        // mmap after a crash, end after a sync flush with no final deflate
+        // block. flate2 >= 1.1.10 rejects that through its `Read` adapters
+        // ("incomplete deflate stream"); the decoder must still return every
+        // line.
+        let mut compressor = ZlibStreamCompressor::new(6);
+        let mut encoded = Vec::new();
+
+        compressor
+            .compress_chunk(b"line-1\n", &mut encoded)
+            .unwrap();
+        compressor
+            .compress_chunk(b"line-2\n", &mut encoded)
+            .unwrap();
+
+        assert_eq!(decompress_raw_zlib(&encoded).unwrap(), b"line-1\nline-2\n");
+    }
+
+    #[test]
     fn stream_compressors_release_emitted_bytes_after_each_chunk() {
         let mut zlib = ZlibStreamCompressor::new(6);
         let mut zlib_out = Vec::new();

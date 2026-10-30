@@ -7,7 +7,7 @@ Provides both `xlog-decoder` and `mars-xlog` binary aliases for full drop-in com
 ## Installation
 
 ```bash
-cargo install xlog-decoder
+cargo install xlog-decoder --locked
 ```
 
 Or run via `cargo`:

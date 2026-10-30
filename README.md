@@ -87,7 +87,7 @@ Install options:
 
 ```bash
 # Cargo install from crates.io (recommended):
-cargo install xlog-decoder
+cargo install xlog-decoder --locked
 
 # Homebrew tap/cask install from this repository or a copied tap.
 brew install --cask ./Casks/mars-xlog.rb
