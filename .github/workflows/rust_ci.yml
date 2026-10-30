@@ -2,6 +2,10 @@ name: rust-ci
 
 on:
   workflow_dispatch:
+  # Weekly run so test-latest-deps catches new upstream releases even when
+  # nothing in this repository changes.
+  schedule:
+    - cron: '0 3 * * 1'
   pull_request:
     paths:
       - '.github/workflows/rust_ci.yml'
@@ -140,6 +144,28 @@ jobs:
       - name: Run tests for release-facing crates
         shell: bash
         run: cargo test -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-features --locked
+
+  # Every other job runs with --locked, but `cargo install` without --locked
+  # and downstream crates resolve the newest compatible dependencies. Run the
+  # tests against those too, so upstream behavior changes (for example
+  # flate2 1.1.10 rejecting sync-flushed deflate streams) fail here first.
+  test-latest-deps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Resolve newest compatible dependencies
+        run: cargo update
+
+      - name: Run tests for release-facing crates
+        run: cargo test -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-features
 
   npm-package:
     runs-on: ubuntu-latest

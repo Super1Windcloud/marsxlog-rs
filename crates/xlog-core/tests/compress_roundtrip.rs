@@ -34,10 +34,13 @@ fn zlib_stream_chunk_without_final_flush_roundtrip() {
     let mut compressor = ZlibStreamCompressor::default();
     let mut out = Vec::new();
     // Only write_plain (Z_SYNC_FLUSH). Do not call finish_into(), which ends the stream.
-    compressor
-        .write_plain(b"mars xlog sync flushed chunk", &mut out)
-        .unwrap();
+    // This is the shape of async blocks flushed at the buffer threshold or
+    // recovered from the mmap after a crash. flate2 >= 1.1.10 rejects it
+    // through its `Read` adapters ("incomplete deflate stream"); the
+    // `latest-deps` CI job runs this against the newest flate2.
+    compressor.write_plain(b"line-1\n", &mut out).unwrap();
+    compressor.write_plain(b"line-2\n", &mut out).unwrap();
 
     let plain = decompress_raw_zlib(&out).unwrap();
-    assert_eq!(plain, b"mars xlog sync flushed chunk");
+    assert_eq!(plain, b"line-1\nline-2\n");
 }
