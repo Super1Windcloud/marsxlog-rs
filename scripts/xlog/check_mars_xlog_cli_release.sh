@@ -99,7 +99,20 @@ record_blocked_step() {
   echo "[release-cli] BLOCK ${name} (${reason})" | tee -a "$summary_file"
 }
 
-core_version="$(cargo pkgid -p mars-xlog-core | sed -E 's/.*#.*@([^ ]+)$/\1/')"
+cli_manifest="${repo_root}/crates/xlog-cli/Cargo.toml"
+cli_core_dep="$(
+  awk -v dep="mars-xlog-core" '
+    $0 ~ "^" dep "[[:space:]]*=" {
+      if (match($0, /version = "[^"]+"/)) {
+        value = substr($0, RSTART, RLENGTH)
+        gsub(/^version = "/, "", value)
+        gsub(/"$/, "", value)
+        print value
+        exit
+      }
+    }
+  ' "$cli_manifest"
+)"
 
 : > "$summary_file"
 echo "# $pkg_name Release Preflight" >> "$summary_file"
@@ -107,7 +120,11 @@ echo >> "$summary_file"
 echo "- artifact_root: \`$out_dir\`" >> "$summary_file"
 echo "- worktree: \`$(git -C "$repo_root" status --short | wc -l | tr -d ' ')\` changed paths" >> "$summary_file"
 echo "- allow_dirty: \`$allow_dirty\`" >> "$summary_file"
-echo "- core_dependency: \`mars-xlog-core = ${core_version}\`" >> "$summary_file"
+if [[ -n "$cli_core_dep" ]]; then
+  echo "- core_dependency: \`mars-xlog-core = ${cli_core_dep}\`" >> "$summary_file"
+else
+  echo "- core_dependency: none" >> "$summary_file"
+fi
 echo >> "$summary_file"
 
 run_step package_list "${package_list_cmd[@]}"
@@ -121,19 +138,19 @@ if [[ "$skip_tests" -eq 0 ]]; then
 fi
 run_step npm_pack npm pack --dry-run --json "${repo_root}/packages/mars-xlog-cli-npm/"
 
-if [[ "$skip_crates_io_check" -eq 0 ]]; then
+if [[ "$skip_crates_io_check" -eq 0 && -n "$cli_core_dep" ]]; then
   run_step core_dependency_in_registry \
-    cargo info "mars-xlog-core@${core_version}" --registry crates-io
+    cargo info "mars-xlog-core@${cli_core_dep}" --registry crates-io
 fi
 
 if [[ "$skip_crates_io_check" -eq 1 ]]; then
-  echo "[release-cli] SKIP publish_dry_run (requires mars-xlog-core ${core_version} to be visible on crates.io)" | tee -a "$summary_file"
-elif [[ "$last_exit_code" -eq 0 ]]; then
+  echo "[release-cli] SKIP publish_dry_run" | tee -a "$summary_file"
+elif [[ -z "$cli_core_dep" || "$last_exit_code" -eq 0 ]]; then
   run_step publish_dry_run "${publish_dry_run_cmd[@]}"
 else
   record_blocked_step \
     publish_dry_run \
-    "mars-xlog-core ${core_version} is not visible to Cargo in the crates.io registry yet; publish mars-xlog-core first and retry after registry propagation"
+    "mars-xlog-core ${cli_core_dep} is not visible to Cargo in the crates.io registry yet; publish mars-xlog-core first and retry after registry propagation"
 fi
 
 echo >> "$summary_file"
