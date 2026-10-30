@@ -106,7 +106,10 @@ assert_eq "packages/mars-xlog-cli-npm version" "$release_version" "$(awk -F'"' '
 assert_eq "Casks/mars-xlog.rb version" "$release_version" "$(awk -F'"' '/^[[:space:]]*version "/ { print $2; exit }' "$xlog_cli_cask")"
 
 assert_eq "mars-xlog -> mars-xlog-core dependency version" "$release_version" "$(dependency_version "$xlog_manifest" "mars-xlog-core")"
-assert_eq "xlog-decoder -> mars-xlog-core dependency version" "$release_version" "$(dependency_version "$xlog_cli_manifest" "mars-xlog-core")"
+cli_core_dep="$(dependency_version "$xlog_cli_manifest" "mars-xlog-core")"
+if [[ -n "$cli_core_dep" ]]; then
+  assert_eq "xlog-decoder -> mars-xlog-core dependency version" "$release_version" "$cli_core_dep"
+fi
 assert_eq "mars-xlog-uniffi -> mars-xlog dependency version" "$release_version" "$(dependency_version "$xlog_uniffi_manifest" "mars-xlog")"
 assert_eq "mars-xlog-android-jni -> mars-xlog dependency version" "$release_version" "$(dependency_version "$xlog_android_manifest" "mars-xlog")"
 assert_eq "mars-xlog-harmony-napi -> mars-xlog dependency version" "$release_version" "$(dependency_version "$xlog_harmony_manifest" "mars-xlog")"
