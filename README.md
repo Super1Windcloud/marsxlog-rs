@@ -99,10 +99,8 @@ npm install -g mars-xlog-cli
 The Homebrew cask and npm package both consume GitHub Release archives named
 `mars-xlog-v<version>-<target>.tar.gz`.
 
-Release workflows are split by channel: `cli-binary-release` creates the
-prebuilt archives, `brew-cask-release` publishes the cask asset, `npm-release`
-publishes the npm wrapper, and `rust-crates-release` publishes crates.io
-packages. The `full-release` workflow composes all of them.
+Crates.io publishing is done locally with `cargo publish`. This repository
+does not run a GitHub Actions release workflow.
 
 ## Example (tracing + tracing-subscriber)
 Enable feature `tracing` and build an `XlogLayer`:
