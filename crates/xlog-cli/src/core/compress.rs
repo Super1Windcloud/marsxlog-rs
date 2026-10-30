@@ -170,7 +170,7 @@ pub fn decompress_raw_zlib(input: &[u8]) -> Result<Vec<u8>, CompressError> {
     let mut out = Vec::with_capacity(input.len().saturating_mul(2).max(1024));
     let mut input_offset = 0;
 
-    while input_offset < input.len() {
+    loop {
         if out.capacity() == out.len() {
             out.reserve(out.len().max(4096));
         }
@@ -186,6 +186,13 @@ pub fn decompress_raw_zlib(input: &[u8]) -> Result<Vec<u8>, CompressError> {
         input_offset += consumed;
 
         if status == Status::StreamEnd {
+            break;
+        }
+
+        // Finished only when the input is exhausted and the last call left
+        // spare output room. A full output buffer means the decompressor may
+        // still hold decoded bytes even after consuming all input.
+        if input_offset >= input.len() && out.len() < out.capacity() {
             break;
         }
 
@@ -246,6 +253,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(decompress_raw_zlib(&encoded).unwrap(), b"line-1\nline-2\n");
+    }
+
+    #[test]
+    fn zlib_stream_decodes_payload_much_larger_than_input() {
+        // Log text often compresses 5-10x. The decoder used to stop once the
+        // input was consumed even though the decompressor still held output
+        // that did not fit the first output buffer, truncating the block
+        // mid-line.
+        let line =
+            b"[I][2026-10-30 +8.0 12:00:00.000][1234, 5678][tag][file.rs:1, func][same message]\n";
+        let plain: Vec<u8> = line.iter().copied().cycle().take(64 * 1024).collect();
+
+        for finish in [false, true] {
+            let mut compressor = ZlibStreamCompressor::new(6);
+            let mut encoded = Vec::new();
+            compressor.compress_chunk(&plain, &mut encoded).unwrap();
+            if finish {
+                compressor.flush(&mut encoded).unwrap();
+            }
+            assert!(
+                encoded.len() * 10 < plain.len(),
+                "fixture must compress well"
+            );
+
+            let decoded = decompress_raw_zlib(&encoded).unwrap();
+            assert_eq!(decoded.len(), plain.len(), "finish={finish}");
+            assert_eq!(decoded, plain, "finish={finish}");
+        }
     }
 
     #[test]
