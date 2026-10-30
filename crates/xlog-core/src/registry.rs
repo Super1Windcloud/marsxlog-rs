@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 
 enum Slot<T> {
     Ready(Weak<T>),
@@ -84,7 +84,17 @@ impl<T> InstanceRegistry<T> {
                         }
                         map.insert(name.to_string(), Slot::Pending(Arc::clone(&gate)));
                     }
-                    return self.publish(name, new_value(), &gate);
+                    // A panicking constructor must not leave the pending slot
+                    // behind, or later callers for this name wait forever.
+                    let mut guard = PendingSlotGuard {
+                        registry: self,
+                        name,
+                        gate: &gate,
+                        armed: true,
+                    };
+                    let built = new_value();
+                    guard.armed = false;
+                    return self.publish(name, built, &gate);
                 }
                 Err(gate) => wait_for_build(&gate),
             }
@@ -169,6 +179,39 @@ impl<T> InstanceRegistry<T> {
     }
 }
 
+struct PendingSlotGuard<'a, T> {
+    registry: &'a InstanceRegistry<T>,
+    name: &'a str,
+    gate: &'a Arc<(Mutex<bool>, Condvar)>,
+    armed: bool,
+}
+
+impl<T> Drop for PendingSlotGuard<'_, T> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Runs during unwinding: tolerate poisoned locks instead of panicking
+        // again, which would abort the process.
+        {
+            let mut map = self
+                .registry
+                .instances
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(Slot::Pending(existing)) = map.get(self.name) {
+                if Arc::ptr_eq(existing, self.gate) {
+                    map.remove(self.name);
+                }
+            }
+        }
+        let (lock, condvar) = &**self.gate;
+        let mut done = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        *done = true;
+        condvar.notify_all();
+    }
+}
+
 fn wait_for_build(gate: &Arc<(Mutex<bool>, Condvar)>) {
     let (lock, condvar) = &**gate;
     let mut done = lock.lock().expect("registry build lock poisoned");
@@ -216,6 +259,21 @@ mod tests {
             .get_or_try_insert_with("beta", || Ok::<_, &'static str>(Arc::new(7usize)))
             .unwrap();
         assert!(Arc::ptr_eq(&inserted, &registry.get("beta").unwrap()));
+    }
+
+    #[test]
+    fn panicking_constructor_releases_pending_slot() {
+        let registry = InstanceRegistry::<usize>::new();
+
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            registry.get_or_insert_with("gamma", || panic!("constructor failed"))
+        }));
+        assert!(caught.is_err());
+        assert!(registry.get("gamma").is_none());
+
+        // Would block forever on the stale pending slot before the guard.
+        let inserted = registry.get_or_insert_with("gamma", || Arc::new(9usize));
+        assert_eq!(*inserted, 9);
     }
 
     #[test]

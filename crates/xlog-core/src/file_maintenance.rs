@@ -97,7 +97,14 @@ fn delete_expired_under(
     for entry in entries {
         let entry = entry.map_err(|e| FileManagerError::ReadDir(dir.to_path_buf(), e))?;
         let path = entry.path();
-        let modified = file_mtime(&path)?;
+        // Another cleaner (for example the app-side retention task) may delete
+        // entries concurrently. A vanished entry is skipped instead of
+        // aborting the whole sweep.
+        let modified = match file_mtime(&path) {
+            Ok(modified) => modified,
+            Err(FileManagerError::Metadata(_, ref e)) if is_not_found(e) => continue,
+            Err(err) => return Err(err),
+        };
         let Ok(age) = now.duration_since(modified) else {
             continue;
         };
@@ -107,10 +114,14 @@ fn delete_expired_under(
 
         if path.is_file() {
             if path.extension().and_then(OsStr::to_str) == Some(LOG_EXT) {
-                fs::remove_file(&path)
-                    .map_err(|e| FileManagerError::RemoveFile(path.clone(), e))?;
-                record_expired_delete();
-                removed_paths.push(path);
+                match fs::remove_file(&path) {
+                    Ok(()) => {
+                        record_expired_delete();
+                        removed_paths.push(path);
+                    }
+                    Err(e) if is_not_found(&e) => {}
+                    Err(e) => return Err(FileManagerError::RemoveFile(path, e)),
+                }
             }
             continue;
         }
@@ -119,10 +130,17 @@ fn delete_expired_under(
             let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
             let is_day_folder = name.len() == 8 && name.chars().all(|c| c.is_ascii_digit());
             if is_day_folder {
-                fs::remove_dir_all(&path).map_err(|e| FileManagerError::RemoveDir(path, e))?;
-                record_expired_delete();
+                match fs::remove_dir_all(&path) {
+                    Ok(()) => record_expired_delete(),
+                    Err(e) if is_not_found(&e) => {}
+                    Err(e) => return Err(FileManagerError::RemoveDir(path, e)),
+                }
             }
         }
     }
     Ok(())
+}
+
+fn is_not_found(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::NotFound
 }

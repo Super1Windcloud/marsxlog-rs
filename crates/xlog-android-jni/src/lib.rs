@@ -3,20 +3,36 @@
 //! The exported symbols are consumed from Java/Kotlin via the `XlogBridge`
 //! wrapper in `examples/android-jni`. They map Java-friendly primitives to the
 //! safe Rust API in `mars-xlog`.
+//!
+//! Every export runs inside [`ffi_guard`]: a panic that unwinds out of an
+//! `extern "system"` function aborts the whole process, so a logging failure
+//! must degrade to a fallback return value instead.
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jobjectArray, jstring};
 use jni::JNIEnv;
 use mars_xlog::{AppenderMode, CompressMode, FileIoAction, LogLevel, RawLogMeta, Xlog, XlogConfig};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Registry of live logger handles keyed by opaque ids.
 static LOGGERS: Lazy<Mutex<HashMap<i64, Xlog>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 /// Monotonic id generator for Java-side handles.
 static NEXT_ID: AtomicI64 = AtomicI64::new(1);
+
+/// Run an export body, returning `fallback` if it panics.
+fn ffi_guard<R>(fallback: R, body: impl FnOnce() -> R) -> R {
+    panic::catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
+}
+
+/// Lock the handle registry. Each map operation is atomic, so a poisoned
+/// lock still guards a consistent map and is safe to reuse.
+fn loggers() -> MutexGuard<'static, HashMap<i64, Xlog>> {
+    LOGGERS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Allocate a new handle id.
 fn next_id() -> i64 {
@@ -26,21 +42,18 @@ fn next_id() -> i64 {
 /// Insert a logger into the registry and return its id.
 fn insert_logger(logger: Xlog) -> i64 {
     let id = next_id();
-    let mut store = LOGGERS.lock().expect("logger store poisoned");
-    store.insert(id, logger);
+    loggers().insert(id, logger);
     id
 }
 
 /// Look up a logger by id.
 fn get_logger(id: i64) -> Option<Xlog> {
-    let store = LOGGERS.lock().expect("logger store poisoned");
-    store.get(&id).cloned()
+    loggers().get(&id).cloned()
 }
 
 /// Remove a logger by id.
 fn remove_logger(id: i64) -> bool {
-    let mut store = LOGGERS.lock().expect("logger store poisoned");
-    store.remove(&id).is_some()
+    loggers().remove(&id).is_some()
 }
 
 /// Convert an optional Java string into Rust.
@@ -140,31 +153,33 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCreat
     compress_level: jint,
     level: jint,
 ) -> jlong {
-    let log_dir = req_string(&mut env, log_dir);
-    let name_prefix = req_string(&mut env, name_prefix);
-    let pub_key = opt_string(&mut env, pub_key);
-    let cache_dir = opt_string(&mut env, cache_dir);
+    ffi_guard(0, || {
+        let log_dir = req_string(&mut env, log_dir);
+        let name_prefix = req_string(&mut env, name_prefix);
+        let pub_key = opt_string(&mut env, pub_key);
+        let cache_dir = opt_string(&mut env, cache_dir);
 
-    let mut cfg = XlogConfig::new(log_dir, name_prefix)
-        .cache_days(cache_days)
-        .mode(to_appender_mode(mode))
-        .compress_mode(to_compress_mode(compress_mode))
-        .compress_level(compress_level);
-    if let Some(key) = pub_key {
-        if !key.is_empty() {
-            cfg = cfg.pub_key(key);
+        let mut cfg = XlogConfig::new(log_dir, name_prefix)
+            .cache_days(cache_days)
+            .mode(to_appender_mode(mode))
+            .compress_mode(to_compress_mode(compress_mode))
+            .compress_level(compress_level);
+        if let Some(key) = pub_key {
+            if !key.is_empty() {
+                cfg = cfg.pub_key(key);
+            }
         }
-    }
-    if let Some(dir) = cache_dir {
-        if !dir.is_empty() {
-            cfg = cfg.cache_dir(dir);
+        if let Some(dir) = cache_dir {
+            if !dir.is_empty() {
+                cfg = cfg.cache_dir(dir);
+            }
         }
-    }
 
-    match Xlog::init(cfg, to_log_level(level)) {
-        Ok(logger) => insert_logger(logger) as jlong,
-        Err(_) => 0,
-    }
+        match Xlog::init(cfg, to_log_level(level)) {
+            Ok(logger) => insert_logger(logger) as jlong,
+            Err(_) => 0,
+        }
+    })
 }
 
 #[no_mangle]
@@ -174,11 +189,13 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeGetLo
     _class: JClass,
     name_prefix: JString,
 ) -> jlong {
-    let name_prefix = req_string(&mut env, name_prefix);
-    match Xlog::get(&name_prefix) {
-        Some(logger) => insert_logger(logger) as jlong,
-        None => 0,
-    }
+    ffi_guard(0, || {
+        let name_prefix = req_string(&mut env, name_prefix);
+        match Xlog::get(&name_prefix) {
+            Some(logger) => insert_logger(logger) as jlong,
+            None => 0,
+        }
+    })
 }
 
 #[no_mangle]
@@ -188,14 +205,16 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeRelea
     _class: JClass,
     handle: jlong,
 ) -> jboolean {
-    if handle == 0 {
-        return 0;
-    }
-    if remove_logger(handle as i64) {
-        1
-    } else {
-        0
-    }
+    ffi_guard(0, || {
+        if handle == 0 {
+            return 0;
+        }
+        if remove_logger(handle as i64) {
+            1
+        } else {
+            0
+        }
+    })
 }
 
 #[no_mangle]
@@ -213,31 +232,33 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeOpenA
     compress_level: jint,
     level: jint,
 ) -> jboolean {
-    let log_dir = req_string(&mut env, log_dir);
-    let name_prefix = req_string(&mut env, name_prefix);
-    let pub_key = opt_string(&mut env, pub_key);
-    let cache_dir = opt_string(&mut env, cache_dir);
+    ffi_guard(0, || {
+        let log_dir = req_string(&mut env, log_dir);
+        let name_prefix = req_string(&mut env, name_prefix);
+        let pub_key = opt_string(&mut env, pub_key);
+        let cache_dir = opt_string(&mut env, cache_dir);
 
-    let mut cfg = XlogConfig::new(log_dir, name_prefix)
-        .cache_days(cache_days)
-        .mode(to_appender_mode(mode))
-        .compress_mode(to_compress_mode(compress_mode))
-        .compress_level(compress_level);
-    if let Some(key) = pub_key {
-        if !key.is_empty() {
-            cfg = cfg.pub_key(key);
+        let mut cfg = XlogConfig::new(log_dir, name_prefix)
+            .cache_days(cache_days)
+            .mode(to_appender_mode(mode))
+            .compress_mode(to_compress_mode(compress_mode))
+            .compress_level(compress_level);
+        if let Some(key) = pub_key {
+            if !key.is_empty() {
+                cfg = cfg.pub_key(key);
+            }
         }
-    }
-    if let Some(dir) = cache_dir {
-        if !dir.is_empty() {
-            cfg = cfg.cache_dir(dir);
+        if let Some(dir) = cache_dir {
+            if !dir.is_empty() {
+                cfg = cfg.cache_dir(dir);
+            }
         }
-    }
 
-    match Xlog::appender_open(cfg, to_log_level(level)) {
-        Ok(()) => 1,
-        Err(_) => 0,
-    }
+        match Xlog::appender_open(cfg, to_log_level(level)) {
+            Ok(()) => 1,
+            Err(_) => 0,
+        }
+    })
 }
 
 #[no_mangle]
@@ -246,7 +267,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeClose
     _env: JNIEnv,
     _class: JClass,
 ) {
-    Xlog::appender_close();
+    ffi_guard((), Xlog::appender_close);
 }
 
 #[no_mangle]
@@ -256,7 +277,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFlush
     _class: JClass,
     sync: jboolean,
 ) {
-    Xlog::flush_all(to_bool(sync));
+    ffi_guard((), || Xlog::flush_all(to_bool(sync)));
 }
 
 #[no_mangle]
@@ -267,12 +288,14 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeIsEna
     handle: jlong,
     level: jint,
 ) -> jboolean {
-    if let Some(logger) = get_logger(handle as i64) {
-        if logger.is_enabled(to_log_level(level)) {
-            return 1;
+    ffi_guard(0, || {
+        if let Some(logger) = get_logger(handle as i64) {
+            if logger.is_enabled(to_log_level(level)) {
+                return 1;
+            }
         }
-    }
-    0
+        0
+    })
 }
 
 #[no_mangle]
@@ -282,18 +305,20 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeGetLe
     _class: JClass,
     handle: jlong,
 ) -> jint {
-    if let Some(logger) = get_logger(handle as i64) {
-        return match logger.level() {
-            LogLevel::Verbose => 0,
-            LogLevel::Debug => 1,
-            LogLevel::Info => 2,
-            LogLevel::Warn => 3,
-            LogLevel::Error => 4,
-            LogLevel::Fatal => 5,
-            LogLevel::None => 6,
-        };
-    }
-    -1
+    ffi_guard(-1, || {
+        if let Some(logger) = get_logger(handle as i64) {
+            return match logger.level() {
+                LogLevel::Verbose => 0,
+                LogLevel::Debug => 1,
+                LogLevel::Info => 2,
+                LogLevel::Warn => 3,
+                LogLevel::Error => 4,
+                LogLevel::Fatal => 5,
+                LogLevel::None => 6,
+            };
+        }
+        -1
+    })
 }
 
 #[no_mangle]
@@ -304,9 +329,11 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetLe
     handle: jlong,
     level: jint,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
-        logger.set_level(to_log_level(level));
-    }
+    ffi_guard((), || {
+        if let Some(logger) = get_logger(handle as i64) {
+            logger.set_level(to_log_level(level));
+        }
+    });
 }
 
 #[no_mangle]
@@ -317,9 +344,11 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetAp
     handle: jlong,
     mode: jint,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
-        logger.set_appender_mode(to_appender_mode(mode));
-    }
+    ffi_guard((), || {
+        if let Some(logger) = get_logger(handle as i64) {
+            logger.set_appender_mode(to_appender_mode(mode));
+        }
+    });
 }
 
 #[no_mangle]
@@ -330,9 +359,11 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFlush
     handle: jlong,
     sync: jboolean,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
-        logger.flush(to_bool(sync));
-    }
+    ffi_guard((), || {
+        if let Some(logger) = get_logger(handle as i64) {
+            logger.flush(to_bool(sync));
+        }
+    });
 }
 
 #[no_mangle]
@@ -343,9 +374,11 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetCo
     handle: jlong,
     open: jboolean,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
-        logger.set_console_log_open(to_bool(open));
-    }
+    ffi_guard((), || {
+        if let Some(logger) = get_logger(handle as i64) {
+            logger.set_console_log_open(to_bool(open));
+        }
+    });
 }
 
 #[no_mangle]
@@ -356,9 +389,11 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetMa
     handle: jlong,
     max_bytes: jlong,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
-        logger.set_max_file_size(max_bytes as i64);
-    }
+    ffi_guard((), || {
+        if let Some(logger) = get_logger(handle as i64) {
+            logger.set_max_file_size(max_bytes as i64);
+        }
+    });
 }
 
 #[no_mangle]
@@ -369,9 +404,11 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetMa
     handle: jlong,
     alive_seconds: jlong,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
-        let _ = logger.set_max_alive_time(alive_seconds as i64);
-    }
+    ffi_guard((), || {
+        if let Some(logger) = get_logger(handle as i64) {
+            let _ = logger.set_max_alive_time(alive_seconds as i64);
+        }
+    });
 }
 
 #[no_mangle]
@@ -384,11 +421,19 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
     tag: JString,
     message: JString,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
+    ffi_guard((), || {
+        let Some(logger) = get_logger(handle as i64) else {
+            return;
+        };
+        // Check the level before copying the Java strings into native memory.
+        let level = to_log_level(level);
+        if !logger.is_enabled(level) {
+            return;
+        }
         let tag = opt_string(&mut env, tag);
         let message = req_string(&mut env, message);
-        logger.write(to_log_level(level), tag.as_deref(), &message);
-    }
+        logger.write(level, tag.as_deref(), &message);
+    });
 }
 
 #[no_mangle]
@@ -404,20 +449,20 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
     line: jint,
     message: JString,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
+    ffi_guard((), || {
+        let Some(logger) = get_logger(handle as i64) else {
+            return;
+        };
+        let level = to_log_level(level);
+        if !logger.is_enabled(level) {
+            return;
+        }
         let tag = opt_string(&mut env, tag);
         let file = req_string(&mut env, file);
         let func = req_string(&mut env, func);
         let message = req_string(&mut env, message);
-        logger.write_with_meta(
-            to_log_level(level),
-            tag.as_deref(),
-            &file,
-            &func,
-            line as u32,
-            &message,
-        );
-    }
+        logger.write_with_meta(level, tag.as_deref(), &file, &func, line as u32, &message);
+    });
 }
 
 #[no_mangle]
@@ -437,7 +482,14 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
     trace_log: jboolean,
     message: JString,
 ) {
-    if let Some(logger) = get_logger(handle as i64) {
+    ffi_guard((), || {
+        let Some(logger) = get_logger(handle as i64) else {
+            return;
+        };
+        let level = to_log_level(level);
+        if !logger.is_enabled(level) {
+            return;
+        }
         let tag = opt_string(&mut env, tag);
         let file = req_string(&mut env, file);
         let func = req_string(&mut env, func);
@@ -445,7 +497,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
         let raw_meta = RawLogMeta::new(pid as i64, tid as i64, maintid as i64)
             .with_trace_log(to_bool(trace_log));
         logger.write_with_meta_raw(
-            to_log_level(level),
+            level,
             tag.as_deref(),
             &file,
             &func,
@@ -453,7 +505,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
             &message,
             raw_meta,
         );
-    }
+    });
 }
 
 #[no_mangle]
@@ -472,21 +524,23 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeAppen
     trace_log: jboolean,
     message: JString,
 ) {
-    let tag = opt_string(&mut env, tag);
-    let file = req_string(&mut env, file);
-    let func = req_string(&mut env, func);
-    let message = req_string(&mut env, message);
-    let raw_meta =
-        RawLogMeta::new(pid as i64, tid as i64, maintid as i64).with_trace_log(to_bool(trace_log));
-    Xlog::appender_write_with_meta_raw(
-        to_log_level(level),
-        tag.as_deref(),
-        &file,
-        &func,
-        line as u32,
-        &message,
-        raw_meta,
-    );
+    ffi_guard((), || {
+        let tag = opt_string(&mut env, tag);
+        let file = req_string(&mut env, file);
+        let func = req_string(&mut env, func);
+        let message = req_string(&mut env, message);
+        let raw_meta = RawLogMeta::new(pid as i64, tid as i64, maintid as i64)
+            .with_trace_log(to_bool(trace_log));
+        Xlog::appender_write_with_meta_raw(
+            to_log_level(level),
+            tag.as_deref(),
+            &file,
+            &func,
+            line as u32,
+            &message,
+            raw_meta,
+        );
+    });
 }
 
 #[no_mangle]
@@ -495,7 +549,9 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCurre
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    to_jstring(&mut env, Xlog::current_log_path())
+    ffi_guard(ptr::null_mut(), || {
+        to_jstring(&mut env, Xlog::current_log_path())
+    })
 }
 
 #[no_mangle]
@@ -504,7 +560,9 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCurre
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    to_jstring(&mut env, Xlog::current_log_cache_path())
+    ffi_guard(ptr::null_mut(), || {
+        to_jstring(&mut env, Xlog::current_log_cache_path())
+    })
 }
 
 #[no_mangle]
@@ -515,8 +573,10 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFilep
     timespan: jint,
     prefix: JString,
 ) -> jobjectArray {
-    let prefix = req_string(&mut env, prefix);
-    strings_to_array(&mut env, Xlog::filepaths_from_timespan(timespan, &prefix))
+    ffi_guard(ptr::null_mut(), || {
+        let prefix = req_string(&mut env, prefix);
+        strings_to_array(&mut env, Xlog::filepaths_from_timespan(timespan, &prefix))
+    })
 }
 
 #[no_mangle]
@@ -527,8 +587,10 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeMakeL
     timespan: jint,
     prefix: JString,
 ) -> jobjectArray {
-    let prefix = req_string(&mut env, prefix);
-    strings_to_array(&mut env, Xlog::make_logfile_name(timespan, &prefix))
+    ffi_guard(ptr::null_mut(), || {
+        let prefix = req_string(&mut env, prefix);
+        strings_to_array(&mut env, Xlog::make_logfile_name(timespan, &prefix))
+    })
 }
 
 #[no_mangle]
@@ -545,40 +607,42 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeOnesh
     compress_mode: jint,
     compress_level: jint,
 ) -> jint {
-    let log_dir = req_string(&mut env, log_dir);
-    let name_prefix = req_string(&mut env, name_prefix);
-    let pub_key = opt_string(&mut env, pub_key);
-    let cache_dir = opt_string(&mut env, cache_dir);
+    ffi_guard(-1, || {
+        let log_dir = req_string(&mut env, log_dir);
+        let name_prefix = req_string(&mut env, name_prefix);
+        let pub_key = opt_string(&mut env, pub_key);
+        let cache_dir = opt_string(&mut env, cache_dir);
 
-    let mut cfg = XlogConfig::new(log_dir, name_prefix)
-        .cache_days(cache_days)
-        .mode(to_appender_mode(mode))
-        .compress_mode(to_compress_mode(compress_mode))
-        .compress_level(compress_level);
-    if let Some(key) = pub_key {
-        if !key.is_empty() {
-            cfg = cfg.pub_key(key);
+        let mut cfg = XlogConfig::new(log_dir, name_prefix)
+            .cache_days(cache_days)
+            .mode(to_appender_mode(mode))
+            .compress_mode(to_compress_mode(compress_mode))
+            .compress_level(compress_level);
+        if let Some(key) = pub_key {
+            if !key.is_empty() {
+                cfg = cfg.pub_key(key);
+            }
         }
-    }
-    if let Some(dir) = cache_dir {
-        if !dir.is_empty() {
-            cfg = cfg.cache_dir(dir);
+        if let Some(dir) = cache_dir {
+            if !dir.is_empty() {
+                cfg = cfg.cache_dir(dir);
+            }
         }
-    }
 
-    match Xlog::oneshot_flush(cfg) {
-        Ok(action) => match action {
-            FileIoAction::None => 0,
-            FileIoAction::Success => 1,
-            FileIoAction::Unnecessary => 2,
-            FileIoAction::OpenFailed => 3,
-            FileIoAction::ReadFailed => 4,
-            FileIoAction::WriteFailed => 5,
-            FileIoAction::CloseFailed => 6,
-            FileIoAction::RemoveFailed => 7,
-        },
-        Err(_) => -1,
-    }
+        match Xlog::oneshot_flush(cfg) {
+            Ok(action) => match action {
+                FileIoAction::None => 0,
+                FileIoAction::Success => 1,
+                FileIoAction::Unnecessary => 2,
+                FileIoAction::OpenFailed => 3,
+                FileIoAction::ReadFailed => 4,
+                FileIoAction::WriteFailed => 5,
+                FileIoAction::CloseFailed => 6,
+                FileIoAction::RemoveFailed => 7,
+            },
+            Err(_) => -1,
+        }
+    })
 }
 
 #[no_mangle]
@@ -588,8 +652,10 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeDump(
     _class: JClass,
     buffer: jbyteArray,
 ) -> jstring {
-    let bytes = bytes_from_array(&mut env, buffer);
-    to_jstring(&mut env, Some(Xlog::dump(&bytes)))
+    ffi_guard(ptr::null_mut(), || {
+        let bytes = bytes_from_array(&mut env, buffer);
+        to_jstring(&mut env, Some(Xlog::dump(&bytes)))
+    })
 }
 
 #[no_mangle]
@@ -599,6 +665,33 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeMemor
     _class: JClass,
     buffer: jbyteArray,
 ) -> jstring {
-    let bytes = bytes_from_array(&mut env, buffer);
-    to_jstring(&mut env, Some(Xlog::memory_dump(&bytes)))
+    ffi_guard(ptr::null_mut(), || {
+        let bytes = bytes_from_array(&mut env, buffer);
+        to_jstring(&mut env, Some(Xlog::memory_dump(&bytes)))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ffi_guard, get_logger, loggers, remove_logger};
+
+    #[test]
+    fn ffi_guard_returns_fallback_on_panic() {
+        assert_eq!(ffi_guard(-1, || -> i32 { panic!("boom") }), -1);
+        assert_eq!(ffi_guard(-1, || 7), 7);
+    }
+
+    #[test]
+    fn poisoned_registry_lock_is_recovered() {
+        let poisoner = std::thread::spawn(|| {
+            let _guard = loggers();
+            panic!("poison the registry lock");
+        });
+        assert!(poisoner.join().is_err());
+
+        // Before the fix every later export hit `expect("poisoned")`, which
+        // aborts the process when it unwinds across the JNI boundary.
+        assert!(get_logger(i64::MAX).is_none());
+        assert!(!remove_logger(i64::MAX));
+    }
 }

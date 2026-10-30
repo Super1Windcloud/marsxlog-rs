@@ -362,6 +362,21 @@ impl PersistentBuffer {
         Ok(())
     }
 
+    /// Write the mmap back to its file and wait for completion (`MS_SYNC`).
+    pub fn persist(&mut self) -> Result<(), BufferError> {
+        self.store.flush()?;
+        Ok(())
+    }
+
+    /// Schedule mmap write-back without waiting (`MS_ASYNC`).
+    ///
+    /// A shared mapping already survives a process crash; this only narrows
+    /// the window for power loss or kernel panics.
+    pub fn persist_async(&mut self) -> Result<(), BufferError> {
+        self.store.flush_async()?;
+        Ok(())
+    }
+
     /// Zero the entire mmap region and reset the valid length to zero.
     pub fn clear(&mut self) -> Result<(), BufferError> {
         self.store.as_mut_slice().fill(0);

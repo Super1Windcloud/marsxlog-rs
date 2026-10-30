@@ -1,15 +1,15 @@
 use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{
-    channel as std_channel, sync_channel, Receiver as StdReceiver, SendError, Sender as StdSender,
-    SyncSender, TryRecvError, TrySendError,
+    channel as std_channel, RecvTimeoutError as StdRecvTimeoutError, Sender as StdSender,
 };
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::TimeZone;
+use crossbeam_channel::{bounded, Receiver, SendTimeoutError, Sender, TryRecvError, TrySendError};
 use crossbeam_queue::ArrayQueue;
 use mars_xlog_core::appender_engine::{
     AppenderEngine, AsyncFlushReason as EngineAsyncFlushReason, EngineMode,
@@ -76,12 +76,41 @@ pub(crate) struct RustBackend {
 }
 
 struct AsyncFrontend {
-    tx: SyncSender<AsyncFrontendCommand>,
+    tx: Sender<AsyncFrontendCommand>,
     accepting: Arc<AtomicBool>,
     flush_queued: Arc<AtomicBool>,
+    backpressure: Arc<FrontendBackpressure>,
     line_pools: Arc<[ArrayQueue<String>]>,
     full_retry_before_block: usize,
     worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// Load-shedding state shared by producers and the frontend worker.
+#[derive(Default)]
+struct FrontendBackpressure {
+    /// Set once a producer timed out on a full queue; later producers drop
+    /// immediately instead of each paying the timeout again.
+    dropping: AtomicBool,
+    /// Lines dropped since the worker last wrote a notice.
+    dropped_lines: AtomicU64,
+}
+
+impl FrontendBackpressure {
+    fn record_drop(&self) {
+        self.dropped_lines.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn take_dropped_notice(&self) -> Option<String> {
+        let dropped = self.dropped_lines.swap(0, Ordering::AcqRel);
+        (dropped > 0).then(|| format!("{ASYNC_QUEUE_FULL_DROPPED_PREFIX}{dropped}\n"))
+    }
+}
+
+enum EnqueueRejected {
+    /// The frontend stopped accepting or its worker is gone; write inline.
+    Closed(AsyncWriteCommand),
+    /// The queue stayed full past the bounded wait; the line is dropped.
+    Dropped(AsyncWriteCommand),
 }
 
 enum AsyncFrontendCommand {
@@ -319,6 +348,15 @@ const ASYNC_LINE_POOL_MAX_BUFFERS_PER_SHARD: usize = 256;
 const ASYNC_LINE_POOL_MAX_CAPACITY: usize = 8 * 1024;
 const ASYNC_LINE_BUFFER_INIT_CAPACITY: usize = 512;
 const ASYNC_LINE_POOL_SHARD_SENTINEL: usize = usize::MAX;
+// A full queue means the worker is stalled (usually on disk I/O). Producers
+// may be the Android main thread, so the blocking send is bounded and the
+// line is dropped afterwards instead of risking an ANR.
+const ASYNC_FRONTEND_BLOCK_SEND_TIMEOUT: Duration = Duration::from_millis(100);
+// Sync flush is called from crash handlers and the main thread.
+const ASYNC_SYNC_FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
+const ASYNC_FRONTEND_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+const ASYNC_QUEUE_FULL_DROPPED_PREFIX: &str =
+    "[W][ xlog async frontend queue full, dropped lines: ";
 // Keep the historical BUFFER_BLOCK_LENTH typo for compatibility with
 // existing Mars/C++ log text and external grep patterns.
 const ASYNC_HIGH_WATERMARK_WARNING_PREFIX: &str =
@@ -344,10 +382,15 @@ fn current_async_line_pool_shard() -> usize {
 }
 
 impl AsyncFrontend {
-    fn new(engine: Arc<AppenderEngine>, config: XlogConfig, cipher: Crypt) -> Self {
-        let (tx, rx) = sync_channel::<AsyncFrontendCommand>(ASYNC_FRONTEND_QUEUE_CAPACITY);
+    fn new(
+        engine: Arc<AppenderEngine>,
+        config: XlogConfig,
+        cipher: Crypt,
+    ) -> Result<Self, XlogError> {
+        let (tx, rx) = bounded::<AsyncFrontendCommand>(ASYNC_FRONTEND_QUEUE_CAPACITY);
         let accepting = Arc::new(AtomicBool::new(true));
         let flush_queued = Arc::new(AtomicBool::new(false));
+        let backpressure = Arc::new(FrontendBackpressure::default());
         let full_retry_before_block = match config.compress_mode {
             CompressMode::Zstd => ASYNC_FRONTEND_FULL_RETRY_BEFORE_BLOCK_ZSTD,
             CompressMode::Zlib => ASYNC_FRONTEND_FULL_RETRY_BEFORE_BLOCK_DEFAULT,
@@ -359,6 +402,7 @@ impl AsyncFrontend {
                 .into_boxed_slice(),
         );
         let worker_flush_queued = Arc::clone(&flush_queued);
+        let worker_backpressure = Arc::clone(&backpressure);
         let worker_line_pools = Arc::clone(&line_pools);
         let worker = thread::Builder::new()
             .name("xlog-rust-async-frontend".to_string())
@@ -366,91 +410,58 @@ impl AsyncFrontend {
                 run_async_frontend_worker(
                     rx,
                     worker_flush_queued,
+                    worker_backpressure,
                     worker_line_pools,
                     engine,
                     config,
                     cipher,
                 );
             })
-            .expect("spawn rust async frontend worker");
-        Self {
+            .map_err(|_| XlogError::InitFailed)?;
+        Ok(Self {
             tx,
             accepting,
             flush_queued,
+            backpressure,
             line_pools,
             full_retry_before_block,
             worker: Mutex::new(Some(worker)),
-        }
+        })
     }
 
-    fn enqueue_write(&self, mut cmd: AsyncWriteCommand) -> Result<(), AsyncWriteCommand> {
-        let enqueue_begin = cmd.profile.as_ref().map(|_| Instant::now());
-        let mut full_retries = 0usize;
-        loop {
-            if !self.accepting.load(Ordering::Acquire) {
-                return Err(cmd);
-            }
-            if let (Some(begin), Some(front)) = (enqueue_begin, cmd.profile.as_mut()) {
-                front.enqueue_ns = begin.elapsed().as_nanos() as u64;
-            }
-            match self.tx.try_send(AsyncFrontendCommand::Write(cmd)) {
-                Ok(()) => {
-                    if enqueue_begin.is_some() {
-                        record_async_enqueued(ASYNC_FRONTEND_QUEUE_CAPACITY);
-                    }
-                    return Ok(());
-                }
-                Err(TrySendError::Disconnected(AsyncFrontendCommand::Write(v))) => return Err(v),
-                Err(TrySendError::Full(AsyncFrontendCommand::Write(v))) => {
-                    if enqueue_begin.is_some() {
-                        record_async_queue_full();
-                    }
-                    cmd = v;
-                    full_retries = full_retries.saturating_add(1);
-                    if full_retries >= self.full_retry_before_block {
-                        if !self.accepting.load(Ordering::Acquire) {
-                            return Err(cmd);
-                        }
-                        let block_begin = enqueue_begin.map(|_| Instant::now());
-                        return match self.tx.send(AsyncFrontendCommand::Write(cmd)) {
-                            Ok(()) => {
-                                if let Some(begin) = block_begin {
-                                    record_async_block_send(begin.elapsed().as_nanos() as u64);
-                                    record_async_enqueued(ASYNC_FRONTEND_QUEUE_CAPACITY);
-                                }
-                                Ok(())
-                            }
-                            Err(SendError(AsyncFrontendCommand::Write(v))) => {
-                                if let Some(begin) = block_begin {
-                                    record_async_block_send(begin.elapsed().as_nanos() as u64);
-                                }
-                                Err(v)
-                            }
-                            Err(_) => unreachable!("unexpected async frontend command variant"),
-                        };
-                    }
-                    thread::yield_now();
-                }
-                Err(_) => unreachable!("unexpected async frontend command variant"),
-            }
-        }
+    fn enqueue_write(&self, cmd: AsyncWriteCommand) -> Result<(), EnqueueRejected> {
+        enqueue_with_backpressure(
+            &self.tx,
+            &self.accepting,
+            &self.backpressure,
+            self.full_retry_before_block,
+            ASYNC_FRONTEND_BLOCK_SEND_TIMEOUT,
+            cmd,
+        )
     }
 
     fn request_flush(&self, sync: bool, reason: AsyncFlushControlReason) -> bool {
         if sync {
+            let deadline = Instant::now() + ASYNC_SYNC_FLUSH_TIMEOUT;
             let (ack_tx, ack_rx) = std_channel::<()>();
-            if self
-                .tx
-                .send(AsyncFrontendCommand::Flush {
+            match self.tx.send_deadline(
+                AsyncFrontendCommand::Flush {
                     sync: true,
                     ack: Some(ack_tx),
                     reason,
-                })
-                .is_err()
-            {
-                return false;
+                },
+                deadline,
+            ) {
+                Ok(()) => {}
+                // Stop waiting, but report the request as handled: the inline
+                // fallback would contend on the same stalled engine.
+                Err(SendTimeoutError::Timeout(_)) => return true,
+                Err(SendTimeoutError::Disconnected(_)) => return false,
             }
-            return ack_rx.recv().is_ok();
+            return match ack_rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(()) | Err(StdRecvTimeoutError::Timeout) => true,
+                Err(StdRecvTimeoutError::Disconnected) => false,
+            };
         }
 
         if self.flush_queued.swap(true, Ordering::AcqRel) {
@@ -506,8 +517,22 @@ impl AsyncFrontend {
     fn shutdown(&self) {
         self.set_accepting(false);
         let (ack_tx, ack_rx) = std_channel::<()>();
-        let _ = self.tx.send(AsyncFrontendCommand::Stop { ack: ack_tx });
-        let _ = ack_rx.recv_timeout(Duration::from_secs(2));
+        let stopped = match self.tx.send_timeout(
+            AsyncFrontendCommand::Stop { ack: ack_tx },
+            ASYNC_FRONTEND_STOP_TIMEOUT,
+        ) {
+            Ok(()) => !matches!(
+                ack_rx.recv_timeout(ASYNC_FRONTEND_STOP_TIMEOUT),
+                Err(StdRecvTimeoutError::Timeout)
+            ),
+            Err(SendTimeoutError::Timeout(_)) => false,
+            Err(SendTimeoutError::Disconnected(_)) => true,
+        };
+        // Only join a worker that stopped or exited. A stalled worker is
+        // detached; it drains and exits once this sender is dropped.
+        if !stopped {
+            return;
+        }
         if let Ok(mut guard) = self.worker.lock() {
             if let Some(handle) = guard.take() {
                 let _ = handle.join();
@@ -516,9 +541,84 @@ impl AsyncFrontend {
     }
 }
 
+fn enqueue_with_backpressure(
+    tx: &Sender<AsyncFrontendCommand>,
+    accepting: &AtomicBool,
+    backpressure: &FrontendBackpressure,
+    full_retry_before_block: usize,
+    block_timeout: Duration,
+    mut cmd: AsyncWriteCommand,
+) -> Result<(), EnqueueRejected> {
+    let enqueue_begin = cmd.profile.as_ref().map(|_| Instant::now());
+    let mut full_retries = 0usize;
+    loop {
+        if !accepting.load(Ordering::Acquire) {
+            return Err(EnqueueRejected::Closed(cmd));
+        }
+        if let (Some(begin), Some(front)) = (enqueue_begin, cmd.profile.as_mut()) {
+            front.enqueue_ns = begin.elapsed().as_nanos() as u64;
+        }
+        match tx.try_send(AsyncFrontendCommand::Write(cmd)) {
+            Ok(()) => {
+                if backpressure.dropping.load(Ordering::Relaxed) {
+                    backpressure.dropping.store(false, Ordering::Relaxed);
+                }
+                if enqueue_begin.is_some() {
+                    record_async_enqueued(ASYNC_FRONTEND_QUEUE_CAPACITY);
+                }
+                return Ok(());
+            }
+            Err(TrySendError::Disconnected(AsyncFrontendCommand::Write(v))) => {
+                return Err(EnqueueRejected::Closed(v));
+            }
+            Err(TrySendError::Full(AsyncFrontendCommand::Write(v))) => {
+                if enqueue_begin.is_some() {
+                    record_async_queue_full();
+                }
+                cmd = v;
+                full_retries = full_retries.saturating_add(1);
+                if full_retries >= full_retry_before_block {
+                    if !accepting.load(Ordering::Acquire) {
+                        return Err(EnqueueRejected::Closed(cmd));
+                    }
+                    if backpressure.dropping.load(Ordering::Relaxed) {
+                        backpressure.record_drop();
+                        return Err(EnqueueRejected::Dropped(cmd));
+                    }
+                    let block_begin = enqueue_begin.map(|_| Instant::now());
+                    let sent = tx.send_timeout(AsyncFrontendCommand::Write(cmd), block_timeout);
+                    if let Some(begin) = block_begin {
+                        record_async_block_send(begin.elapsed().as_nanos() as u64);
+                    }
+                    return match sent {
+                        Ok(()) => {
+                            if enqueue_begin.is_some() {
+                                record_async_enqueued(ASYNC_FRONTEND_QUEUE_CAPACITY);
+                            }
+                            Ok(())
+                        }
+                        Err(SendTimeoutError::Timeout(AsyncFrontendCommand::Write(v))) => {
+                            backpressure.dropping.store(true, Ordering::Relaxed);
+                            backpressure.record_drop();
+                            Err(EnqueueRejected::Dropped(v))
+                        }
+                        Err(SendTimeoutError::Disconnected(AsyncFrontendCommand::Write(v))) => {
+                            Err(EnqueueRejected::Closed(v))
+                        }
+                        Err(_) => unreachable!("unexpected async frontend command variant"),
+                    };
+                }
+                thread::yield_now();
+            }
+            Err(_) => unreachable!("unexpected async frontend command variant"),
+        }
+    }
+}
+
 fn run_async_frontend_worker(
-    rx: StdReceiver<AsyncFrontendCommand>,
+    rx: Receiver<AsyncFrontendCommand>,
     flush_queued: Arc<AtomicBool>,
+    backpressure: Arc<FrontendBackpressure>,
     line_pools: Arc<[ArrayQueue<String>]>,
     engine: Arc<AppenderEngine>,
     config: XlogConfig,
@@ -539,6 +639,26 @@ fn run_async_frontend_worker(
                 let mut cmd = cmd;
                 if cmd.profile.is_some() {
                     record_async_dequeued();
+                }
+                // Mark the gap left by lines dropped under backpressure.
+                if let Some(line) = backpressure.take_dropped_notice() {
+                    let mut notice = AsyncWriteCommand {
+                        line,
+                        pool_shard: ASYNC_LINE_POOL_SHARD_SENTINEL,
+                        now_hour: cmd.now_hour,
+                        force_flush: false,
+                        profile: None,
+                    };
+                    handle_async_frontend_write(
+                        &mut notice,
+                        &engine,
+                        &config,
+                        &cipher,
+                        capacity,
+                        &mut pending,
+                        &mut compress_scratch,
+                        &mut block_scratch,
+                    );
                 }
                 handle_async_frontend_write(
                     &mut cmd,
@@ -996,14 +1116,17 @@ impl RustBackend {
         )
         .map_err(|_| XlogError::InitFailed)?;
 
-        let engine = Arc::new(AppenderEngine::new(
-            file_manager,
-            buffer,
-            appender_to_engine_mode(config.mode),
-            0,
-            10 * 24 * 60 * 60,
-        ));
-        let async_frontend = AsyncFrontend::new(Arc::clone(&engine), config.clone(), cipher);
+        let engine = Arc::new(
+            AppenderEngine::try_new(
+                file_manager,
+                buffer,
+                appender_to_engine_mode(config.mode),
+                0,
+                10 * 24 * 60 * 60,
+            )
+            .map_err(|_| XlogError::InitFailed)?,
+        );
+        let async_frontend = AsyncFrontend::new(Arc::clone(&engine), config.clone(), cipher)?;
         async_frontend.set_accepting(config.mode == AppenderMode::Async);
 
         Ok(Self {
@@ -1303,10 +1426,19 @@ impl RustBackend {
             }),
         };
 
-        if let Err(cmd) = self.async_frontend.enqueue_write(cmd) {
-            self.async_frontend
-                .recycle_line_buffer(cmd.pool_shard, cmd.line);
-            self.write_async_line_inline(event);
+        match self.async_frontend.enqueue_write(cmd) {
+            Ok(()) => {}
+            Err(EnqueueRejected::Closed(cmd)) => {
+                self.async_frontend
+                    .recycle_line_buffer(cmd.pool_shard, cmd.line);
+                self.write_async_line_inline(event);
+            }
+            // The worker is stalled; an inline write would block on the same
+            // engine lock, so the line is dropped and counted instead.
+            Err(EnqueueRejected::Dropped(cmd)) => {
+                self.async_frontend
+                    .recycle_line_buffer(cmd.pool_shard, cmd.line);
+            }
         }
     }
 
@@ -2348,6 +2480,58 @@ mod tests {
         assert!(text.contains(super::ASYNC_HIGH_WATERMARK_WARNING_PREFIX));
         assert!(!text.contains("ORIGINAL-LINE-SHOULD-BE-DROPPED"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn full_queue_drops_after_bounded_wait_then_sheds_without_waiting() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+
+        use super::{
+            enqueue_with_backpressure, AsyncFrontendCommand, AsyncWriteCommand, EnqueueRejected,
+            FrontendBackpressure, ASYNC_LINE_POOL_SHARD_SENTINEL, ASYNC_QUEUE_FULL_DROPPED_PREFIX,
+        };
+
+        // Nobody drains the queue, standing in for a worker stuck on disk I/O.
+        let (tx, rx) = crossbeam_channel::bounded::<AsyncFrontendCommand>(1);
+        let accepting = AtomicBool::new(true);
+        let backpressure = FrontendBackpressure::default();
+        let timeout = Duration::from_millis(50);
+        let cmd = |text: &str| AsyncWriteCommand {
+            line: text.to_string(),
+            pool_shard: ASYNC_LINE_POOL_SHARD_SENTINEL,
+            now_hour: 0,
+            force_flush: false,
+            profile: None,
+        };
+        let enqueue = |text: &str| {
+            enqueue_with_backpressure(&tx, &accepting, &backpressure, 1, timeout, cmd(text))
+        };
+
+        assert!(enqueue("fills the queue").is_ok());
+
+        let begin = Instant::now();
+        assert!(matches!(enqueue("waits"), Err(EnqueueRejected::Dropped(_))));
+        assert!(begin.elapsed() >= timeout);
+
+        // Already shedding: later callers must not pay the timeout again.
+        let begin = Instant::now();
+        assert!(matches!(enqueue("sheds"), Err(EnqueueRejected::Dropped(_))));
+        assert!(begin.elapsed() < timeout);
+
+        assert_eq!(
+            backpressure.take_dropped_notice(),
+            Some(format!("{ASYNC_QUEUE_FULL_DROPPED_PREFIX}2\n"))
+        );
+        assert_eq!(backpressure.take_dropped_notice(), None);
+
+        // Once the worker drains, writes go through and shedding stops.
+        let _ = rx.try_recv().expect("queued write");
+        assert!(enqueue("recovered").is_ok());
+        assert!(!backpressure.dropping.load(Ordering::Relaxed));
+
+        accepting.store(false, Ordering::Release);
+        assert!(matches!(enqueue("closed"), Err(EnqueueRejected::Closed(_))));
     }
 
     #[cfg(debug_assertions)]

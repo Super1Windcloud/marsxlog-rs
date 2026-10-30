@@ -1153,6 +1153,34 @@ mod tests {
         assert!(other_dir.exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn delete_expired_files_skips_entries_that_vanish_mid_sweep() {
+        let root = tempfile::tempdir().unwrap();
+        let log_dir = root.path().join("log");
+        let manager = FileManager::new(
+            log_dir.clone(),
+            None,
+            "demo",
+            CacheDays::try_from(0).unwrap(),
+        )
+        .unwrap();
+
+        // A dangling symlink fails `metadata` with NotFound, the same error a
+        // concurrent deletion between `read_dir` and `metadata` produces.
+        let vanished = log_dir.join("demo_vanished.xlog");
+        std::os::unix::fs::symlink(log_dir.join("missing-target"), &vanished).unwrap();
+        let old_log = log_dir.join("demo_old.xlog");
+        fs::write(&old_log, b"old-log").unwrap();
+        let old =
+            FileTime::from_system_time(SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60));
+        set_file_mtime(&old_log, old).unwrap();
+
+        manager.delete_expired_files(24 * 60 * 60).unwrap();
+
+        assert!(!old_log.exists());
+    }
+
     #[test]
     fn file_manager_lock_rejects_second_process() {
         if env::var("XLOG_LOCK_CHILD").ok().as_deref() == Some("1") {
