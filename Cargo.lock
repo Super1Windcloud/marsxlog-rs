@@ -1130,7 +1130,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mars-xlog"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "criterion",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "mars-xlog-android-jni"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "jni",
  "mars-xlog",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "mars-xlog-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "chrono",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "mars-xlog-sys"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "libc",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "mars-xlog-uniffi"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "mars-xlog",
  "thiserror 1.0.69",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "oh-xlog"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "mars-xlog",
  "napi-build-ohos",
@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "xlog-decoder"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap",
  "flate2",
