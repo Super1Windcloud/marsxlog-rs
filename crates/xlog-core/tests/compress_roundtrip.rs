@@ -1,5 +1,5 @@
 use mars_xlog_core::compress::{
-    decompress_raw_zlib, decompress_zstd_frames, StreamCompressor, ZlibStreamCompressor,
+    decompress_raw_zlib, decompress_zstd_frames, ZlibStreamCompressor, ZstdLevel,
     ZstdStreamCompressor,
 };
 
@@ -8,9 +8,9 @@ fn zlib_stream_roundtrip() {
     let mut compressor = ZlibStreamCompressor::default();
     let mut out = Vec::new();
 
-    compressor.compress_chunk(b"hello", &mut out).unwrap();
-    compressor.compress_chunk(b" world", &mut out).unwrap();
-    compressor.flush(&mut out).unwrap();
+    compressor.write_plain(b"hello", &mut out).unwrap();
+    compressor.write_plain(b" world", &mut out).unwrap();
+    compressor.finish_into(&mut out).unwrap();
 
     let plain = decompress_raw_zlib(&out).unwrap();
     assert_eq!(plain, b"hello world");
@@ -18,12 +18,12 @@ fn zlib_stream_roundtrip() {
 
 #[test]
 fn zstd_frames_roundtrip() {
-    let mut compressor = ZstdStreamCompressor::new(3).unwrap();
+    let mut compressor = ZstdStreamCompressor::new(ZstdLevel::try_from(3).unwrap()).unwrap();
     let mut out = Vec::new();
 
-    compressor.compress_chunk(b"mars", &mut out).unwrap();
-    compressor.compress_chunk(b" xlog", &mut out).unwrap();
-    compressor.flush(&mut out).unwrap();
+    compressor.write_plain(b"mars", &mut out).unwrap();
+    compressor.write_plain(b" xlog", &mut out).unwrap();
+    compressor.finish_into(&mut out).unwrap();
 
     let plain = decompress_zstd_frames(&out).unwrap();
     assert_eq!(plain, b"mars xlog");
@@ -33,9 +33,9 @@ fn zstd_frames_roundtrip() {
 fn zlib_stream_chunk_without_final_flush_roundtrip() {
     let mut compressor = ZlibStreamCompressor::default();
     let mut out = Vec::new();
-    // Only compress_chunk with sync flush, never call compressor.flush() to finish stream
+    // Only write_plain (Z_SYNC_FLUSH). Do not call finish_into(), which ends the stream.
     compressor
-        .compress_chunk(b"mars xlog sync flushed chunk", &mut out)
+        .write_plain(b"mars xlog sync flushed chunk", &mut out)
         .unwrap();
 
     let plain = decompress_raw_zlib(&out).unwrap();
