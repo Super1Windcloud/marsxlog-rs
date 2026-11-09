@@ -175,10 +175,12 @@ pub fn write_console_line(
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn level_short(level: LogLevel) -> &'static str {
     level.short()
 }
 
+#[cfg(not(target_os = "android"))]
 fn format_basic_console_line(
     level: LogLevel,
     tag: &str,
@@ -283,7 +285,7 @@ unsafe extern "C" {
     );
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::format_basic_console_line;
     use crate::record::LogLevel;

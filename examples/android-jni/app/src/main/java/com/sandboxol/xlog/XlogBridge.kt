@@ -1,5 +1,8 @@
-package com.tencent.mars.xlog.example
+package com.sandboxol.xlog
 
+import androidx.annotation.Keep
+
+@Keep
 object XlogBridge {
     init {
         System.loadLibrary("mars_xlog_android_jni")
@@ -55,6 +58,20 @@ object XlogBridge {
         level: Int,
     ): Long
 
+    /** Creates a logger with file splitting set from the start; see the native doc. */
+    external fun nativeCreateLoggerWithMaxFileSize(
+        logDir: String,
+        namePrefix: String,
+        pubKey: String?,
+        cacheDir: String?,
+        cacheDays: Int,
+        mode: Int,
+        compressMode: Int,
+        compressLevel: Int,
+        level: Int,
+        maxFileSize: Long,
+    ): Long
+
     external fun nativeGetLogger(namePrefix: String): Long
     external fun nativeReleaseLogger(handle: Long): Boolean
 
@@ -89,6 +106,33 @@ object XlogBridge {
         file: String,
         func: String,
         line: Int,
+        message: String,
+    )
+
+    external fun nativeWriteWithRawMeta(
+        handle: Long,
+        level: Int,
+        tag: String?,
+        file: String,
+        func: String,
+        line: Int,
+        pid: Long,
+        tid: Long,
+        maintid: Long,
+        traceLog: Boolean,
+        message: String,
+    )
+
+    external fun nativeAppenderWriteWithRawMeta(
+        level: Int,
+        tag: String?,
+        file: String,
+        func: String,
+        line: Int,
+        pid: Long,
+        tid: Long,
+        maintid: Long,
+        traceLog: Boolean,
         message: String,
     )
 
