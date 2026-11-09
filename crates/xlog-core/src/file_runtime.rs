@@ -186,24 +186,26 @@ impl RuntimeState {
         let now_ts = Local::now().timestamp();
 
         let mut matched_current_dir = false;
-        if let Some(target) = self.log_target.as_mut() {
-            if target.day_key == day_key && target.path.file_name() == file_name {
-                target.merged_len = merged_len;
-                if target.path == path {
-                    target.local_exists = true;
-                    target.local_len = current_len;
-                    matched_current_dir = true;
-                }
+        if let Some(target) = self.log_target.as_mut()
+            && target.day_key == day_key
+            && target.path.file_name() == file_name
+        {
+            target.merged_len = merged_len;
+            if target.path == path {
+                target.local_exists = true;
+                target.local_len = current_len;
+                matched_current_dir = true;
             }
         }
-        if let Some(target) = self.cache_target.as_mut() {
-            if target.day_key == day_key && target.path.file_name() == file_name {
-                target.merged_len = merged_len;
-                if target.path == path {
-                    target.local_exists = true;
-                    target.local_len = current_len;
-                    matched_current_dir = true;
-                }
+        if let Some(target) = self.cache_target.as_mut()
+            && target.day_key == day_key
+            && target.path.file_name() == file_name
+        {
+            target.merged_len = merged_len;
+            if target.path == path {
+                target.local_exists = true;
+                target.local_len = current_len;
+                matched_current_dir = true;
             }
         }
 
@@ -225,17 +227,17 @@ impl RuntimeState {
     }
 
     pub(crate) fn mark_path_removed(&mut self, path: &Path) {
-        if let Some(target) = self.log_target.as_mut() {
-            if target.path == path {
-                target.local_exists = false;
-                target.local_len = 0;
-            }
+        if let Some(target) = self.log_target.as_mut()
+            && target.path == path
+        {
+            target.local_exists = false;
+            target.local_len = 0;
         }
-        if let Some(target) = self.cache_target.as_mut() {
-            if target.path == path {
-                target.local_exists = false;
-                target.local_len = 0;
-            }
+        if let Some(target) = self.cache_target.as_mut()
+            && target.path == path
+        {
+            target.local_exists = false;
+            target.local_len = 0;
         }
         if self
             .active_file

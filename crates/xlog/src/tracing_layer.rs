@@ -165,21 +165,21 @@ where
         event.record(&mut visitor);
 
         let mut message = visitor.finish();
-        if self.include_spans {
-            if let Some(scope) = ctx.event_scope(event) {
-                let mut spans = String::new();
-                for span in scope.from_root() {
-                    if !spans.is_empty() {
-                        spans.push_str(" > ");
-                    }
-                    spans.push_str(span.metadata().name());
-                }
+        if self.include_spans
+            && let Some(scope) = ctx.event_scope(event)
+        {
+            let mut spans = String::new();
+            for span in scope.from_root() {
                 if !spans.is_empty() {
-                    if message.is_empty() {
-                        message = spans;
-                    } else {
-                        message = format!("[{}] {}", spans, message);
-                    }
+                    spans.push_str(" > ");
+                }
+                spans.push_str(span.metadata().name());
+            }
+            if !spans.is_empty() {
+                if message.is_empty() {
+                    message = spans;
+                } else {
+                    message = format!("[{}] {}", spans, message);
                 }
             }
         }

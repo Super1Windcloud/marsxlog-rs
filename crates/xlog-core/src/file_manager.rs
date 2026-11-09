@@ -396,12 +396,13 @@ impl FileManager {
         }
 
         append_slices_keep_open(active, slices)?;
-        if let Some(target) = runtime.log_target.as_mut() {
-            if target.day_key == active.day_key && target.path == active.path {
-                target.local_exists = true;
-                target.local_len = active.logical_len;
-                target.merged_len = active.logical_len;
-            }
+        if let Some(target) = runtime.log_target.as_mut()
+            && target.day_key == active.day_key
+            && target.path == active.path
+        {
+            target.local_exists = true;
+            target.local_len = active.logical_len;
+            target.merged_len = active.logical_len;
         }
         Ok(true)
     }
@@ -593,22 +594,21 @@ impl FileManager {
         let now_ts = now.timestamp();
         let day_key = day_key(now);
 
-        if keep_open {
-            if let Some(active) = runtime.active_file.as_ref() {
-                if active.day_key == day_key && active.path.parent() == Some(dir) {
-                    let path = active.path.clone();
-                    runtime.record_last_append(now_ts, &path);
-                    return path;
-                }
-            }
+        if keep_open
+            && let Some(active) = runtime.active_file.as_ref()
+            && active.day_key == day_key
+            && active.path.parent() == Some(dir)
+        {
+            let path = active.path.clone();
+            runtime.record_last_append(now_ts, &path);
+            return path;
         }
 
-        if let Some(last_ts) = runtime.last_append_time {
-            if now_ts < last_ts {
-                if let Some(path) = runtime.last_append_path.clone() {
-                    return path;
-                }
-            }
+        if let Some(last_ts) = runtime.last_append_time
+            && now_ts < last_ts
+            && let Some(path) = runtime.last_append_path.clone()
+        {
+            return path;
         }
         if let Some(path) = runtime.next_cached_path(
             self.target_dirs(),
@@ -793,10 +793,10 @@ impl FileManager {
 
 fn lock_paths(log_dir: &Path, cache_dir: Option<&Path>, prefix: &str) -> Vec<PathBuf> {
     let mut dirs = vec![log_dir.to_path_buf()];
-    if let Some(cache_dir) = cache_dir {
-        if cache_dir != log_dir {
-            dirs.push(cache_dir.to_path_buf());
-        }
+    if let Some(cache_dir) = cache_dir
+        && cache_dir != log_dir
+    {
+        dirs.push(cache_dir.to_path_buf());
     }
     dirs.sort();
     dirs.dedup();

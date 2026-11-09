@@ -987,16 +987,12 @@ fn write_out_buffer_locked(
                 None
             }
         };
-        if write_startup_mmap_tips {
-            if let Some(begin) = build_sync_tip_block(sample_header, "~~~~~ begin of mmap ~~~~~\n")
-            {
-                state.file_manager.append_log_bytes(
-                    &begin,
-                    state.max_file_size,
-                    false,
-                    keep_open,
-                )?;
-            }
+        if write_startup_mmap_tips
+            && let Some(begin) = build_sync_tip_block(sample_header, "~~~~~ begin of mmap ~~~~~\n")
+        {
+            state
+                .file_manager
+                .append_log_bytes(&begin, state.max_file_size, false, keep_open)?;
         }
 
         {

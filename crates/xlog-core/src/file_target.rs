@@ -72,11 +72,11 @@ fn next_file_index_state(
     let last = &names[0];
 
     let mut idx = 0i64;
-    if let Some(base) = last.strip_suffix(LOG_EXT_WITH_DOT) {
-        if let Some(rest) = base.strip_prefix(date_prefix) {
-            let rest = rest.strip_prefix('_').unwrap_or(rest);
-            idx = rest.parse::<i64>().unwrap_or(0);
-        }
+    if let Some(base) = last.strip_suffix(LOG_EXT_WITH_DOT)
+        && let Some(rest) = base.strip_prefix(date_prefix)
+    {
+        let rest = rest.strip_prefix('_').unwrap_or(rest);
+        idx = rest.parse::<i64>().unwrap_or(0);
     }
 
     let mut merged_size = 0u64;

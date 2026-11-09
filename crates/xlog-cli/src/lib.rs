@@ -226,13 +226,13 @@ fn process_zip(
                 source: e,
             })?;
         } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    fs::create_dir_all(p).map_err(|e| CliError::Io {
-                        path: p.display().to_string(),
-                        source: e,
-                    })?;
-                }
+            if let Some(p) = outpath.parent()
+                && !p.exists()
+            {
+                fs::create_dir_all(p).map_err(|e| CliError::Io {
+                    path: p.display().to_string(),
+                    source: e,
+                })?;
             }
             let mut outfile = fs::File::create(&outpath).map_err(|e| CliError::Io {
                 path: outpath.display().to_string(),
@@ -281,14 +281,14 @@ fn process_zip(
     }
 
     let summary_file = target_dir.join("export_summary.txt");
-    if summary_file.is_file() {
-        if let Ok(content) = fs::read_to_string(&summary_file) {
-            println!("\n{}", "=".repeat(70));
-            println!("📝 Diagnostic Package Summary (export_summary.txt):");
-            println!("{}", "=".repeat(70));
-            println!("{}", content.trim());
-            println!("{}", "=".repeat(70));
-        }
+    if summary_file.is_file()
+        && let Ok(content) = fs::read_to_string(&summary_file)
+    {
+        println!("\n{}", "=".repeat(70));
+        println!("📝 Diagnostic Package Summary (export_summary.txt):");
+        println!("{}", "=".repeat(70));
+        println!("{}", content.trim());
+        println!("{}", "=".repeat(70));
     }
 
     println!(
@@ -424,10 +424,10 @@ fn decode_single_xlog(
     output_file: &Path,
     key: Option<&str>,
 ) -> Result<usize, CliError> {
-    if let Some(p) = output_file.parent() {
-        if !p.exists() {
-            let _ = fs::create_dir_all(p);
-        }
+    if let Some(p) = output_file.parent()
+        && !p.exists()
+    {
+        let _ = fs::create_dir_all(p);
     }
 
     let metadata = fs::metadata(input_file).map_err(|e| CliError::Io {

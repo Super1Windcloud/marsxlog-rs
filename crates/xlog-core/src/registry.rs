@@ -71,10 +71,10 @@ impl<T> InstanceRegistry<T> {
                     let gate = Arc::new((Mutex::new(false), Condvar::new()));
                     {
                         let mut map = self.instances.lock().expect("instances lock poisoned");
-                        if let Some(Slot::Ready(existing)) = map.get(name) {
-                            if let Some(value) = existing.upgrade() {
-                                return Ok(value);
-                            }
+                        if let Some(Slot::Ready(existing)) = map.get(name)
+                            && let Some(value) = existing.upgrade()
+                        {
+                            return Ok(value);
                         }
                         if let Some(Slot::Pending(existing)) = map.get(name) {
                             let existing = Arc::clone(existing);
@@ -199,10 +199,10 @@ impl<T> Drop for PendingSlotGuard<'_, T> {
                 .instances
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if let Some(Slot::Pending(existing)) = map.get(self.name) {
-                if Arc::ptr_eq(existing, self.gate) {
-                    map.remove(self.name);
-                }
+            if let Some(Slot::Pending(existing)) = map.get(self.name)
+                && Arc::ptr_eq(existing, self.gate)
+            {
+                map.remove(self.name);
             }
         }
         let (lock, condvar) = &**self.gate;

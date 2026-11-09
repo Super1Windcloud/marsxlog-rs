@@ -209,10 +209,10 @@ impl FrameWriter {
     pub fn finish(&mut self, hour: Hour, encoded: &mut Vec<u8>) -> Result<usize, FrameError> {
         self.with_compressed(encoded, |encoder, scratch| encoder.finish_into(scratch))?;
         if encoded.is_empty() {
-            if let FrameKind::Async(state) = &mut self.kind {
-                if let Some(open) = state.open.as_mut() {
-                    open.header.end_hour = hour;
-                }
+            if let FrameKind::Async(state) = &mut self.kind
+                && let Some(open) = state.open.as_mut()
+            {
+                open.header.end_hour = hour;
             }
             return Ok(0);
         }
@@ -244,10 +244,10 @@ impl FrameWriter {
     /// The high-watermark path uses this when the in-memory length, not a fresh
     /// compression, decides which line is written.
     pub fn set_payload_len(&mut self, len: usize) {
-        if let FrameKind::Async(state) = &mut self.kind {
-            if let Some(open) = state.open.as_mut() {
-                open.payload_len = len;
-            }
+        if let FrameKind::Async(state) = &mut self.kind
+            && let Some(open) = state.open.as_mut()
+        {
+            open.payload_len = len;
         }
     }
 

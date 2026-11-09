@@ -620,10 +620,10 @@ impl AsyncFrontend {
         if !stopped {
             return;
         }
-        if let Ok(mut guard) = self.worker.lock() {
-            if let Some(handle) = guard.take() {
-                let _ = handle.join();
-            }
+        if let Ok(mut guard) = self.worker.lock()
+            && let Some(handle) = guard.take()
+        {
+            let _ = handle.join();
         }
     }
 }
@@ -790,17 +790,17 @@ fn run_async_frontend_worker(
                         Err(TryRecvError::Disconnected) => return,
                     }
                 }
-                if let Some(control) = pending_control {
-                    if handle_async_frontend_control(
+                if let Some(control) = pending_control
+                    && handle_async_frontend_control(
                         control,
                         &flush_queued,
                         &engine,
                         &cipher,
                         &mut pending,
                         &mut compress_scratch,
-                    ) {
-                        break;
-                    }
+                    )
+                {
+                    break;
                 }
             }
             control => {
@@ -935,13 +935,12 @@ fn handle_async_frontend_write(
     if !ensure_async_open(pending, config, *cipher, engine, cmd.now_hour, engine_epoch) {
         return;
     }
-    if let Some(begin) = begin_pending_begin {
-        if pending
+    if let Some(begin) = begin_pending_begin
+        && pending
             .as_ref()
             .is_some_and(|writer| writer.line_count() == 0)
-        {
-            stage.begin_pending_ns = begin.elapsed().as_nanos() as u64;
-        }
+    {
+        stage.begin_pending_ns = begin.elapsed().as_nanos() as u64;
     }
 
     let Some(state) = pending.as_ref() else {
@@ -1287,16 +1286,16 @@ impl RustBackend {
     }
 
     fn checkout_async_state(&self, profile_enabled: bool) -> CheckedOutAsyncState<'_> {
-        if let Ok(mut guard) = self.async_state.try_lock() {
-            if !guard.busy {
-                guard.busy = true;
-                return CheckedOutAsyncState {
-                    backend: self,
-                    pending: guard.pending.take(),
-                    checkout_lock_ns: 0,
-                    checkout_wait_ns: 0,
-                };
-            }
+        if let Ok(mut guard) = self.async_state.try_lock()
+            && !guard.busy
+        {
+            guard.busy = true;
+            return CheckedOutAsyncState {
+                backend: self,
+                pending: guard.pending.take(),
+                checkout_lock_ns: 0,
+                checkout_wait_ns: 0,
+            };
         }
         let lock_begin = profile_enabled.then(Instant::now);
         let mut guard = self.async_state.lock().expect("async state lock poisoned");
@@ -1642,13 +1641,12 @@ impl RustBackend {
                 ) {
                     return;
                 }
-                if let Some(begin) = begin_pending_begin {
-                    if checked_out
+                if let Some(begin) = begin_pending_begin
+                    && checked_out
                         .pending()
                         .is_some_and(|writer| writer.line_count() == 0)
-                    {
-                        stage.begin_pending_ns = begin.elapsed().as_nanos() as u64;
-                    }
+                {
+                    stage.begin_pending_ns = begin.elapsed().as_nanos() as u64;
                 }
                 let Some(state) = checked_out.pending() else {
                     return;
