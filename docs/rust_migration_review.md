@@ -1,21 +1,24 @@
-# Rust Migration Review
+# Rust Migration Review（历史归档）
 
-> 更新日期: 2026-03-16
+> 原文日期: 2026-03-16
+> 归档日期: 2026-11-08
 
-## 1. 当前状态
+当前状态见仓库 [README](../README.md) 的 Migration status：运行时使用 Rust（`mars-xlog-core` + `mars-xlog`），遗留 C++ FFI 与 Python 2 对比工具链已经退役。
 
-Rust 迁移主体已经完成。
+本文归档 2026-03-16 的评审结论。其中“尚未进入可移除 C++ 参考实现阶段”已经过期。
 
-当前只保留以下有效结论：
+## 1. 历史状态（2026-03-16）
+
+Rust 迁移主体在当时已经完成。当时保留的结论：
 
 1. Rust backend 已覆盖协议、压缩、加密、formatter、mmap、文件管理和 bindings 主路径
 2. benchmark 结果支持“Rust 已具备受控接入和持续优化价值”
 3. Rust 侧 active semantic blocker 已清零
-4. 这不等价于已经进入 GA 或可移除 C++ 参考实现阶段
+4. 当时判断这不等价于已经进入 GA，也不等价于可移除 C++ 参考实现。该判断已经过期
 
-## 2. 当前主线
+## 2. 当时的主线
 
-当前主线不是继续补迁移功能，而是：
+当时的主线是消费已经落地的迁移结果：
 
 1. 消费 async observability
 2. 维持 single-writer guardrails
@@ -23,8 +26,9 @@ Rust 迁移主体已经完成。
 
 ## 3. 配套文档
 
-1. 性能与正确性审查见 [rust_core_performance_review.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/rust_core_performance_review.md)
-2. 代码架构与可维护性审查见 [rust_core_code_review.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/rust_core_code_review.md)
-3. 语义护栏见 [rust_semantic_redlines.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/rust_semantic_redlines.md)
-4. benchmark 体系见 [benchmark_strategy.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/benchmark_strategy.md)
-5. 发布计划见 [rust_release_plan.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/rust_release_plan.md)
+1. 性能与正确性审查见 [rust_core_performance_review.md](rust_core_performance_review.md)
+2. 代码架构与可维护性审查见 [rust_core_code_review.md](rust_core_code_review.md)
+3. 语义护栏见 [rust_semantic_redlines.md](rust_semantic_redlines.md)
+4. benchmark 体系见 [benchmark_strategy.md](benchmark_strategy.md)
+5. 发布计划见 [rust_release_plan.md](rust_release_plan.md)
+6. 同期计划归档见 [xlog_rust_migration_plan.md](xlog_rust_migration_plan.md)

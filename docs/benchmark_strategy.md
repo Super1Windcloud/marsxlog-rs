@@ -4,11 +4,12 @@
 
 本文只记录当前仍然有效的 benchmark 基础设施、最新基线结论、仍未收口的可信度缺口，以及后续治理顺序。
 
-迁移评审文档不再重复承载完整 benchmark 设计细节；项目级结论统一在：
+运行时现状见仓库 [README](../README.md) 的 Migration status。性能结论见 [rust_core_performance_review.md](rust_core_performance_review.md)。
 
-1. `docs/rust_migration_review.md`
-2. `docs/rust_core_performance_review.md`
-3. `docs/xlog_rust_migration_plan.md`
+2026-03-16 的迁移结论已归档，现行状态以 README 为准：
+
+1. [rust_migration_review.md](rust_migration_review.md)
+2. [xlog_rust_migration_plan.md](xlog_rust_migration_plan.md)
 
 ## 2. 当前 benchmark 体系
 
@@ -17,8 +18,10 @@
 1. 标准 Rust 微基准
    - `cargo bench -p mars-xlog-core --bench criterion_components`
    - `cargo bench -p mars-xlog --bench criterion_write_path`
-2. Rust 端到端矩阵
-   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix.tsv --out-root <dir> --backends rust --runs 1 --components`
+2. Rust 端到端矩阵。baseline、stress、feature 三份 manifest 合计 31 个场景，参数与原先的总矩阵一致：
+   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix_baseline.tsv --out-root <dir> --backends rust --runs 1 --components`
+   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix_stress.tsv --out-root <dir> --backends rust --runs 1 --components`
+   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix_feature.tsv --out-root <dir> --backends rust --runs 1 --components`
 3. 需要更细归因时，启用 `metrics` 并通过 recorder 采集
    - `cargo run --release -p mars-xlog --example bench_backend --no-default-features --features rust-backend,metrics -- --out-dir <dir> ...`
 
@@ -256,8 +259,10 @@
    - `scripts/xlog/run_criterion_bench.sh --out-root artifacts/criterion/<run_name>`
 2. 需要阶段归因时
    - `cargo run --release -p mars-xlog --example bench_backend --no-default-features --features rust-backend,metrics -- --out-dir <dir> ...`
-3. 跑 Rust 矩阵
-   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix.tsv --out-root <current_root> --backends rust --runs 1 --components`
+3. 跑 Rust 矩阵。按需选择 baseline、stress 或 feature：
+   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix_baseline.tsv --out-root <current_root> --backends rust --runs 1 --components`
+   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix_stress.tsv --out-root <current_root> --backends rust --runs 1 --components`
+   - `scripts/xlog/run_bench_matrix.sh --manifest scripts/xlog/bench_matrix_feature.tsv --out-root <current_root> --backends rust --runs 1 --components`
 4. 单次分析
    - `python3 scripts/xlog/analyze_bench.py --root <current_root>`
 5. 回归判定
@@ -290,4 +295,4 @@ benchmark 体系达到“可信基线 + 基本可归因”至少需要同时满�
 2. 全量矩阵不再依赖单次运行才能做关键判断
 3. 关键 async 热点已有 block/flush/compression 级归因，而不是只看吞吐与 p99
 4. Criterion 与 matrix 的 CI 门禁边界清晰，不把高噪声场景和稳定场景混在一套规则里
-5. benchmark 结论与当前代码、当前迁移文档不再互相矛盾
+5. benchmark 结论与当前代码、README 中的迁移状态一致

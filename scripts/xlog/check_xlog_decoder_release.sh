@@ -12,7 +12,7 @@ Options:
   --out-dir <dir>           Artifact root (default: artifacts/release/<timestamp>-xlog-decoder)
   --allow-dirty             Allow cargo package/publish dry-run on a dirty worktree
   --skip-tests              Skip cargo test
-  --skip-crates-io-check    Skip crates.io visibility check and publish dry-run
+  --skip-crates-io-check    Skip cargo publish --dry-run
   -h, --help                Show help
 USAGE
 }
@@ -88,43 +88,12 @@ run_step() {
   fi
 }
 
-record_blocked_step() {
-  local name="$1"
-  local reason="$2"
-  local logfile="$out_dir/logs/${name}.log"
-  : > "$logfile"
-  printf '%s\n' "$reason" >> "$logfile"
-  failures=$((failures + 1))
-  failed_steps+=("${name}:blocked")
-  echo "[release-cli] BLOCK ${name} (${reason})" | tee -a "$summary_file"
-}
-
-cli_manifest="${repo_root}/crates/xlog-cli/Cargo.toml"
-cli_core_dep="$(
-  awk -v dep="mars-xlog-core" '
-    $0 ~ "^" dep "[[:space:]]*=" {
-      if (match($0, /version = "[^"]+"/)) {
-        value = substr($0, RSTART, RLENGTH)
-        gsub(/^version = "/, "", value)
-        gsub(/"$/, "", value)
-        print value
-        exit
-      }
-    }
-  ' "$cli_manifest"
-)"
-
 : > "$summary_file"
 echo "# $pkg_name Release Preflight" >> "$summary_file"
 echo >> "$summary_file"
 echo "- artifact_root: \`$out_dir\`" >> "$summary_file"
 echo "- worktree: \`$(git -C "$repo_root" status --short | wc -l | tr -d ' ')\` changed paths" >> "$summary_file"
 echo "- allow_dirty: \`$allow_dirty\`" >> "$summary_file"
-if [[ -n "$cli_core_dep" ]]; then
-  echo "- core_dependency: \`mars-xlog-core = ${cli_core_dep}\`" >> "$summary_file"
-else
-  echo "- core_dependency: none" >> "$summary_file"
-fi
 echo >> "$summary_file"
 
 run_step package_list "${package_list_cmd[@]}"
@@ -137,19 +106,10 @@ if [[ "$skip_tests" -eq 0 ]]; then
   run_step tests cargo test -p "$pkg_name" --locked
 fi
 
-if [[ "$skip_crates_io_check" -eq 0 && -n "$cli_core_dep" ]]; then
-  run_step core_dependency_in_registry \
-    cargo info "mars-xlog-core@${cli_core_dep}" --registry crates-io
-fi
-
 if [[ "$skip_crates_io_check" -eq 1 ]]; then
   echo "[release-cli] SKIP publish_dry_run" | tee -a "$summary_file"
-elif [[ -z "$cli_core_dep" || "$last_exit_code" -eq 0 ]]; then
-  run_step publish_dry_run "${publish_dry_run_cmd[@]}"
 else
-  record_blocked_step \
-    publish_dry_run \
-    "mars-xlog-core ${cli_core_dep} is not visible to Cargo in the crates.io registry yet; publish mars-xlog-core first and retry after registry propagation"
+  run_step publish_dry_run "${publish_dry_run_cmd[@]}"
 fi
 
 echo >> "$summary_file"
