@@ -6,18 +6,17 @@ crates.io 发布在本机执行 `cargo publish`。仓库里不再保留 GitHub A
 
 ## 1. 版本号策略
 
-当前 Rust crate、CLI 二进制、Homebrew cask 与 npm package manifest 仍使用同一个 release version。
+当前 Rust crate 与 CLI 二进制使用同一个 release version；npm/Homebrew 包装入口已退役。
 
 需要保持一致的位置：
 
 1. `crates/xlog-core/Cargo.toml`
 2. `crates/xlog/Cargo.toml`
 3. `crates/xlog-cli/Cargo.toml`
-4. `packages/mars-xlog-cli-npm/package.json`
-5. `Casks/mars-xlog.rb`
-6. workspace 内对 `mars-xlog-core` / `mars-xlog` 的 path 依赖版本
+4. JNI、UniFFI、Harmony 绑定的 manifest
+5. workspace 内对 `mars-xlog-core` / `mars-xlog` 的 path 依赖版本
 
-使用统一版本的原因是：crate、npm 包和 Homebrew cask 按同一个 release version 发布。`xlog-decoder` 自带解码实现，不依赖 `mars-xlog-core`。
+`xlog-decoder` 自带解码实现，不依赖 `mars-xlog-core`。CLI 只构建 `xlog-decoder`，可选归档使用 `xlog-decoder-v<version>-<target>.tar.gz`，不再提供旧命令别名。
 
 版本更新命令：
 
@@ -49,7 +48,7 @@ v0.1.0
 要求：
 
 1. tag 必须指向 `main` 上已经合入的 release commit
-2. tag 中的版本号必须与所有 manifest、npm package 和 cask 版本一致
+2. tag 中的版本号必须与上述所有 Cargo manifest 版本一致
 3. 不要把同一个版本号重新打到不同 commit 上
 
 版本 tag 只用于标记已经合入 `main` 的 release commit，推送 tag 不会发布。
@@ -77,7 +76,7 @@ cargo publish -p xlog-decoder --locked
 scripts/xlog/check_rust_release_tag.sh --tag v<version>
 scripts/xlog/check_mars_xlog_core_release.sh
 scripts/xlog/check_mars_xlog_release.sh --skip-crates-io-check
-scripts/xlog/check_mars_xlog_cli_release.sh
+scripts/xlog/check_xlog_decoder_release.sh
 ```
 
 crates.io 上已经存在的版本不能再次发布。release commit 需要变化时，递增版本号并打新 tag。

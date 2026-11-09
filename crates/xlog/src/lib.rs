@@ -592,7 +592,7 @@ pub enum ConsoleFun {
 #[cfg(feature = "macros")]
 #[macro_export]
 macro_rules! xlog {
-    ($logger:expr, $level:expr, $tag:expr, $($arg:tt)+) => {{
+    ($logger:expr_2021, $level:expr_2021, $tag:expr_2021, $($arg:tt)+) => {{
         let logger_ref = $logger;
         let level = $level;
         if logger_ref.is_enabled(level) {
@@ -606,7 +606,7 @@ macro_rules! xlog {
 #[cfg(feature = "macros")]
 #[macro_export]
 macro_rules! xlog_debug {
-    ($logger:expr, $tag:expr, $($arg:tt)+) => {{
+    ($logger:expr_2021, $tag:expr_2021, $($arg:tt)+) => {{
         $crate::xlog!($logger, $crate::LogLevel::Debug, $tag, $($arg)+)
     }};
 }
@@ -615,7 +615,7 @@ macro_rules! xlog_debug {
 #[cfg(feature = "macros")]
 #[macro_export]
 macro_rules! xlog_info {
-    ($logger:expr, $tag:expr, $($arg:tt)+) => {{
+    ($logger:expr_2021, $tag:expr_2021, $($arg:tt)+) => {{
         $crate::xlog!($logger, $crate::LogLevel::Info, $tag, $($arg)+)
     }};
 }
@@ -624,7 +624,7 @@ macro_rules! xlog_info {
 #[cfg(feature = "macros")]
 #[macro_export]
 macro_rules! xlog_warn {
-    ($logger:expr, $tag:expr, $($arg:tt)+) => {{
+    ($logger:expr_2021, $tag:expr_2021, $($arg:tt)+) => {{
         $crate::xlog!($logger, $crate::LogLevel::Warn, $tag, $($arg)+)
     }};
 }
@@ -633,7 +633,7 @@ macro_rules! xlog_warn {
 #[cfg(feature = "macros")]
 #[macro_export]
 macro_rules! xlog_error {
-    ($logger:expr, $tag:expr, $($arg:tt)+) => {{
+    ($logger:expr_2021, $tag:expr_2021, $($arg:tt)+) => {{
         $crate::xlog!($logger, $crate::LogLevel::Error, $tag, $($arg)+)
     }};
 }

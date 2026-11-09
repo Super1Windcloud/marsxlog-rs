@@ -1,6 +1,6 @@
 # Rust 维护门槛
 
-本文定义 `mars-xlog-core`、`mars-xlog` 与 `mars-xlog-cli` 的长期维护门槛。
+本文定义 `mars-xlog-core`、`mars-xlog` 与 `xlog-decoder` 的长期维护门槛。
 
 适用范围：
 
@@ -97,8 +97,7 @@
 
 1. `scripts/xlog/check_mars_xlog_core_release.sh --skip-tests`
 2. `scripts/xlog/check_mars_xlog_release.sh --skip-tests --skip-crates-io-check`
-3. `scripts/xlog/check_mars_xlog_cli_release.sh --skip-tests --skip-crates-io-check`
-4. `npm pack --dry-run --json ./packages/mars-xlog-cli-npm`
+3. `scripts/xlog/check_xlog_decoder_release.sh --skip-tests --skip-crates-io-check`
 
 这保证：
 

@@ -138,7 +138,7 @@ fn bytes_from_array(env: &mut JNIEnv, input: jbyteArray) -> Vec<u8> {
     env.convert_byte_array(array).unwrap_or_default()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Create a new logger instance and return its handle id.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCreateLogger(
     mut env: JNIEnv,
@@ -170,7 +170,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCreat
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Create a logger with file splitting configured from the start.
 ///
 /// Prefer this over `nativeCreateLogger` + `nativeSetMaxFileSize`: init
@@ -251,7 +251,7 @@ fn create_logger(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Look up a logger by name prefix and return its handle id.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeGetLogger(
     mut env: JNIEnv,
@@ -267,7 +267,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeGetLo
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Release a logger handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeReleaseLogger(
     _env: JNIEnv,
@@ -286,7 +286,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeRelea
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Open the global appender using the provided config.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeOpenAppender(
     mut env: JNIEnv,
@@ -330,7 +330,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeOpenA
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Close the global appender.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCloseAppender(
     _env: JNIEnv,
@@ -339,7 +339,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeClose
     ffi_guard((), Xlog::appender_close);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Flush all instances.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFlushAll(
     _env: JNIEnv,
@@ -349,7 +349,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFlush
     ffi_guard((), || Xlog::flush_all(to_bool(sync)));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Check whether a log level is enabled for the given handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeIsEnabled(
     _env: JNIEnv,
@@ -367,7 +367,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeIsEna
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Get the current log level for a handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeGetLevel(
     _env: JNIEnv,
@@ -390,7 +390,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeGetLe
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Set the log level for a handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetLevel(
     _env: JNIEnv,
@@ -405,7 +405,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetLe
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Set the appender mode for a handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetAppenderMode(
     _env: JNIEnv,
@@ -420,7 +420,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetAp
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Flush logs for a single handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFlush(
     _env: JNIEnv,
@@ -435,7 +435,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFlush
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Enable or disable console logging for a handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetConsoleLogOpen(
     _env: JNIEnv,
@@ -450,7 +450,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetCo
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Set maximum file size for a handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetMaxFileSize(
     _env: JNIEnv,
@@ -465,7 +465,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetMa
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Set maximum log file age for a handle.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetMaxAliveTime(
     _env: JNIEnv,
@@ -480,7 +480,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeSetMa
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Write a log message.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite(
     mut env: JNIEnv,
@@ -505,7 +505,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Write a log message with explicit metadata.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWriteWithMeta(
     mut env: JNIEnv,
@@ -534,7 +534,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Write a log message with explicit metadata and raw pid/tid/trace flags.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWriteWithRawMeta(
     mut env: JNIEnv,
@@ -577,7 +577,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeWrite
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Write to the global/default appender with raw metadata.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeAppenderWriteWithRawMeta(
     mut env: JNIEnv,
@@ -612,7 +612,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeAppen
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Get the current log path for the global appender.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCurrentLogPath(
     mut env: JNIEnv,
@@ -623,7 +623,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCurre
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Get the current log cache path for the global appender.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCurrentLogCachePath(
     mut env: JNIEnv,
@@ -634,7 +634,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeCurre
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// List log file paths for a given timespan (days from today).
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFilepathsFromTimespan(
     mut env: JNIEnv,
@@ -648,7 +648,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeFilep
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Build log file names for a given timespan (days from today).
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeMakeLogfileName(
     mut env: JNIEnv,
@@ -662,7 +662,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeMakeL
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Flush logs once and return a `FileIoAction` code.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeOneshotFlush(
     mut env: JNIEnv,
@@ -714,7 +714,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeOnesh
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Convert a binary log buffer into text using Mars decoding.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeDump(
     mut env: JNIEnv,
@@ -727,7 +727,7 @@ pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeDump(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Convert a binary log buffer into text using in-memory decoding.
 pub extern "system" fn Java_com_tencent_mars_xlog_example_XlogBridge_nativeMemoryDump(
     mut env: JNIEnv,

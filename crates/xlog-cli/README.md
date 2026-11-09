@@ -2,7 +2,7 @@
 
 High-performance, pure-Rust command-line decoder for Tencent Mars `xlog` files, batch log directories, and Feedback diagnostic ZIP archives.
 
-Provides both `xlog-decoder` and `mars-xlog` binary aliases for full drop-in compatibility.
+Provides the `xlog-decoder` binary for files, directories, and diagnostic archives.
 
 ## Installation
 
@@ -37,10 +37,10 @@ xlog-decoder app.xlog app.log -k <64_HEX_PRIVATE_KEY>
 xlog-decoder app.xlog app.log
 ```
 
-You can also use flag syntax or the `mars-xlog` alias:
+You can also use flag syntax:
 
 ```bash
-mars-xlog -i app.xlog -o app.log -k <64_HEX_PRIVATE_KEY>
+xlog-decoder -i app.xlog -o app.log -k <64_HEX_PRIVATE_KEY>
 ```
 
 ### 2. Batch Directory Processing

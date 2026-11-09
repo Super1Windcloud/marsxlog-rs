@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Run Phase 5 regression/performance checks for Rust default backend rollout.
+Run protocol, decoder, binding, and performance checks for the Rust backend.
 
 Usage:
   scripts/xlog/run_phase5_regression.sh [options]
@@ -15,9 +15,6 @@ Options:
   --compress <zlib|zstd>  Benchmark compression mode (default: zlib)
   --threads <n>           Benchmark worker threads (default: 1)
   --flush-every <n>       Async flush cadence per thread (default: 0)
-  --count <n>             Record count for phase2c2 fixture generation (default: 32)
-  --skip-setup            Skip Python2 decoder setup for phase2c2
-  --skip-phase2c2         Skip official decoder compatibility regression
   --skip-bindings         Skip JNI/UniFFI/NAPI cargo checks
   --skip-bench            Skip backend benchmarks
   -h, --help              Show help
@@ -33,9 +30,6 @@ mode="async"
 compress="zlib"
 threads=1
 flush_every=0
-count=32
-skip_setup=0
-skip_phase2c2=0
 skip_bindings=0
 skip_bench=0
 
@@ -64,18 +58,6 @@ while (($# > 0)); do
     --flush-every)
       flush_every="${2:-}"
       shift 2
-      ;;
-    --count)
-      count="${2:-}"
-      shift 2
-      ;;
-    --skip-setup)
-      skip_setup=1
-      shift
-      ;;
-    --skip-phase2c2)
-      skip_phase2c2=1
-      shift
       ;;
     --skip-bindings)
       skip_bindings=1
@@ -115,10 +97,6 @@ if ! [[ "$threads" =~ ^[0-9]+$ ]] || [[ "$threads" -eq 0 ]]; then
 fi
 if ! [[ "$flush_every" =~ ^[0-9]+$ ]]; then
   echo "--flush-every must be a non-negative integer" >&2
-  exit 2
-fi
-if ! [[ "$count" =~ ^[0-9]+$ ]] || [[ "$count" -eq 0 ]]; then
-  echo "--count must be a positive integer" >&2
   exit 2
 fi
 
@@ -168,18 +146,8 @@ run_step() {
 echo "[phase5] artifact_root=${out_dir}" | tee -a "$summary_file"
 echo "[phase5] bench messages=${messages}, mode=${mode}, compress=${compress}, threads=${threads}, flush_every=${flush_every}" | tee -a "$summary_file"
 
-if [[ "$skip_phase2c2" -eq 0 ]]; then
-  phase2c2_cmd=(
-    "${repo_root}/scripts/xlog/run_phase2c2_official.sh"
-    --out-dir "${out_dir}/phase2c2_fixtures"
-    --backend rust
-    --count "$count"
-  )
-  if [[ "$skip_setup" -eq 1 ]]; then
-    phase2c2_cmd+=(--skip-setup)
-  fi
-  run_step "phase2c2_official" "${phase2c2_cmd[@]}"
-fi
+run_step "protocol_compat" cargo test --manifest-path "${repo_root}/Cargo.toml" -p mars-xlog-core --locked --test protocol_compat
+run_step "decoder" cargo test --manifest-path "${repo_root}/Cargo.toml" -p xlog-decoder --locked --test decoder
 
 if [[ "$skip_bindings" -eq 0 ]]; then
   run_step "check_uniffi_rust" cargo check -p mars-xlog-uniffi --no-default-features --features rust-backend

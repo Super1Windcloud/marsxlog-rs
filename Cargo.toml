@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/xlog-sys",
     "crates/xlog",
     "crates/xlog-core",
     "crates/xlog-cli",
@@ -19,7 +18,7 @@ default-members = [
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT"
 authors = ["xlog-rs contributors"]
 homepage = "https://github.com/Super1Windcloud/marsxlog-rs"

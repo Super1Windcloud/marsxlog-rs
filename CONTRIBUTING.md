@@ -7,14 +7,13 @@ Thanks for your interest in improving mars-xlog.
 - Run tests with `cargo test` where applicable.
 - If you touch native build logic, mention the toolchains you used in the PR.
 
-## Updating the Mars submodule
-This repo uses Tencent Mars as a git submodule at `third_party/mars`.
-Use the following to update it:
+## Protocol and decoder validation
+The workspace uses the Rust backend and does not require external C++ sources or Python 2.
+Keep protocol and decoder fixtures covered when changing the on-disk format:
 
 ```bash
-git -C third_party/mars fetch
-git -C third_party/mars checkout <tag-or-commit>
-git add third_party/mars
+cargo test -p mars-xlog-core --locked --test protocol_compat
+cargo test -p xlog-decoder --locked --test decoder
 ```
 
 ## Reporting issues

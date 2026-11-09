@@ -1,10 +1,10 @@
 Third-Party Notices
 ===================
 
-This project uses Tencent Mars as a git submodule at:
-  third_party/mars
+This project implements the Tencent Mars xlog protocol in Rust.
+Tencent Mars project and license information are available at:
+  https://github.com/Tencent/mars
+  https://github.com/Tencent/mars/blob/master/LICENSE
 
-Tencent Mars is licensed under the MIT License, with additional third-party
-components under their respective licenses. For full license texts, see:
-  - third_party/mars/LICENSE
-  - third_party/mars/Copyright Notice of Boost
+The historical C++ source checkout and FFI build tools are no longer distributed
+with this workspace. This notice preserves the protocol's upstream attribution.

@@ -1,6 +1,6 @@
 #[cfg(not(feature = "rust-backend"))]
 compile_error!(
-    "mars-xlog requires the `rust-backend` feature; the C++ backend is repository-local only"
+    "mars-xlog requires the `rust-backend` feature; the legacy C++ backend has been retired"
 );
 
 mod metrics;

@@ -16,7 +16,7 @@
 
 不改的部分：header、magic、序号、ECDH+TEA、mmap 文件名、恢复、oneshot 的连续追加、单写者锁文件、sync/fatal 的耐久语义、引擎那条无界命令通道。`appender_open` / `appender_close` / `instance()` / `RawLogMeta` / `FileIoAction` / 全局写保持为绑定用的兼容层，这一轮不删。`mars-xlog` 现有调用方式继续能编译。JNI、UniFFI、NAPI、Dart 的 Rust 桥在边界上转换，不改它们的源文件。
 
-`dyn XlogBackend` 在发布面上只有一个实现。`Xlog` 改为直接持有具体的 `RustBackend`。C++ backend 不在 `mars-xlog` 的默认发布面上，见下文「现状」。删的是 trait，不是 `crates/xlog-sys`。
+`dyn XlogBackend` 在发布面上只有一个实现。`Xlog` 改为直接持有具体的 `RustBackend`。C++ backend 不在 `mars-xlog` 的默认发布面上，见下文「现状」。历史 C++ FFI 工具链现已退役，当前仅维护 Rust backend。
 
 ## 现状
 
@@ -60,7 +60,7 @@
 
 `-1`。`RawLogMeta` 的默认值是 `-1`。core 的 `LogRecord` 已经是 `Option<i64>`，formatter 用 `unwrap_or(运行时 id)`。哨兵只该留在 facade。今天它留在 `resolve_record_meta`，这一点是对的，但每个写入口都还要传 `RawLogMeta`。
 
-`dyn XlogBackend`。`crates/xlog/src/backend/mod.rs` 在没有 `rust-backend` feature 时 `compile_error!`，文案写明 C++ backend 只留在仓库本地。`crates/xlog/Cargo.toml` 的 `default = ["rust-backend"]`，注释是 “Public release surface is Rust-only”。`mars-xlog` 不依赖 `mars-xlog-sys`。全仓库 `impl XlogBackend` 只有 `RustBackend`。`XlogBackendProvider` 同样只有 `RustBackendProvider`。trait 没有第二种生产实现。
+`dyn XlogBackend`。`crates/xlog/src/backend/mod.rs` 在没有 `rust-backend` feature 时 `compile_error!`，文案写明 不再提供 C++ backend。`crates/xlog/Cargo.toml` 的 `default = ["rust-backend"]`，注释是 “Public release surface is Rust-only”。当前日志库只依赖 Rust core。全仓库 `impl XlogBackend` 只有 `RustBackend`。`XlogBackendProvider` 同样只有 `RustBackendProvider`。trait 没有第二种生产实现。
 
 格式化写死。热路径只有 `format_record_parts_into`。没有布局值。`LogRecord` 是拥有字符串的记录，不是热路径类型；热路径不经过它。
 
@@ -562,7 +562,7 @@ xlog-appender-engine（无界 crossbeam channel）
 - 不把格式化挪到 worker。那样要么给命令加生命周期，要么在入队前把每段字符串都克隆一份。
 - 不在这一轮做格式串文法。`Piece` 由代码组装。
 - 不删 `appender_open` / `appender_close` / `instance` / `RawLogMeta` / `FileIoAction` / 全局写，也不改它们的签名。绑定还在用。
-- 不删 `mars-xlog-sys`，也不把它接回 `mars-xlog`。它不在发布面上。
+- 保持日志库与平台绑定的 Rust backend 调用契约。历史 C++ FFI 工具链已退役。
 - 不改控制台字节去复用 Mars 行。四套控制台格式都和落盘行不同。
 - 不合并 `mars_xlog::LogLevel` 和 `mars_xlog_core::record::LogLevel`。绑定和公开 API 用的是前者。合并是另一次全仓库改名。
 - 不把 `FrameWriter` 搬进 `AppenderEngine`，也不删 `write_async_parts`。那是上一轮留下的引擎内部收口，不是这一轮的调用面。
@@ -641,7 +641,7 @@ xlog-appender-engine（无界 crossbeam channel）
 
 ## Key Decisions
 
-1. `Xlog` 持有 `Arc<RustBackend>`，删除 `XlogBackend` 和 `XlogBackendProvider`。发布面只有这一个实现，C++ backend 不在 `mars-xlog` 的依赖里。再留 trait 只为了涂类型。`mars-xlog-sys` 不动。
+1. `Xlog` 持有 `Arc<RustBackend>`，删除 `XlogBackend` 和 `XlogBackendProvider`。发布面只有这一个实现，C++ backend 不在 `mars-xlog` 的依赖里。再留 trait 只为了涂类型。历史 C++ FFI 工具链已退役。
 
 2. `Event` 放在 `mars-xlog`，`level` 用 facade 的 `LogLevel`。core 用 `MarsFields` 接住 `write_mars_line`。两套 `LogLevel` 不在这轮合并，避免绑定和公开 API 一起改名。转换只有 `From` 和一次 `as i32`。
 

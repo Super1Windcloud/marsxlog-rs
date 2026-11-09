@@ -1,18 +1,18 @@
 # xlog-rs
 
-This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The public Rust release surface is `mars-xlog`; legacy C/C++ support stays repository-local.
+This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The public Rust release surface is `mars-xlog`; the standalone decoder is `xlog-decoder`.
 
 ## Release surface
 
 - `mars-xlog` is the release-facing Rust crate and the intended Cargo entry point for Rust users.
 - `mars-xlog-core` is the implementation-layer crate used by `mars-xlog`.
-- `xlog-decoder` provides the `xlog-decoder` / `mars-xlog` command-line decoder for xlog files, batch folders, and feedback ZIP packages.
-- `mars-xlog-sys` and the platform binding crates remain repository-local support crates and are not part of the `mars-xlog` release surface.
+- `xlog-decoder` provides the command-line decoder for xlog files, batch folders, and feedback ZIP packages.
+- The platform binding crates remain repository-local support crates and are not part of the `mars-xlog` release surface.
 
 ## Migration status
-- Default runtime path is Rust (`mars-xlog-core` + `mars-xlog`); C++ build is no longer part of default workspace build.
+- The runtime uses Rust (`mars-xlog-core` + `mars-xlog`); the legacy C++ FFI and Python 2 comparison toolchains have been retired.
 - UniFFI/JNI/Harmony wrappers are wired to the Rust backend by default.
-- `mars-xlog-sys` remains as a legacy crate for compatibility verification and reference, but it is not wired into `mars-xlog`.
+- Protocol constants, compression, encryption, and decoding are covered by the checked-in Rust tests; they do not require a Tencent Mars source checkout.
 
 ## Workspace crates
 - `mars-xlog-core`: Rust runtime core (protocol/compress/crypto/mmap/appender).
@@ -21,7 +21,6 @@ This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The
 - `mars-xlog-uniffi`: minimal UniFFI surface (Kotlin/Swift friendly).
 - `mars-xlog-android-jni`: JNI bridge used by the Android example app.
 - `oh-xlog`: Harmony/ohos N-API bindings.
-- `mars-xlog-sys`: legacy raw FFI + native build (C/C++/ObjC++) crate.
 
 ## Flutter package
 - `packages/xlog`: Flutter-native Dart FFI package using native assets and a Rust `cdylib`.
@@ -29,28 +28,10 @@ This workspace provides a Rust-native implementation of Tencent Mars `xlog`. The
 - The Flutter side is pinned through `fvm` in [`packages/xlog/.fvmrc`](./packages/xlog/.fvmrc).
 
 ## Build notes
+- All workspace crates and the standalone Flutter native package use Rust 2024.
+- `rustfmt.toml` preserves the existing formatting style independently of the language edition.
 - Published Rust crates target standard stable Rust toolchain (no hardcoded version required).
 - Default workspace build (`cargo build`) uses the Rust backend and does not require C++14/Boost toolchains.
-- `mars-xlog-sys` is excluded from workspace `default-members`; build it explicitly when needed:
-  - `cargo build -p mars-xlog-sys`
-- Building `mars-xlog-sys` uses source path `./third_party/mars/mars` by default.
-- Override Mars source with `MARS_SRC_DIR=/path/to/mars` (the `mars` directory inside the Mars repo).
-
-## Mars submodule
-This repository uses Tencent Mars as a git submodule at `third_party/mars` for compatibility tests, decoder scripts, and legacy FFI builds.
-The legacy `mars-xlog-sys` build uses `third_party/mars/mars` (the Mars repo's `mars/` directory).
-
-Initialize the submodule (first time):
-```bash
-git submodule update --init --recursive
-```
-
-Update the submodule to a newer commit:
-```bash
-git -C third_party/mars fetch
-git -C third_party/mars checkout <tag-or-commit>
-git add third_party/mars
-```
 
 ## Example (Rust)
 ```rust
@@ -74,30 +55,23 @@ fn main() -> anyhow::Result<()> {
 Decode a generated `.xlog` file:
 
 ```bash
-mars-xlog decode --input app.xlog --output app.log --key <64-hex-private-key>
+xlog-decoder decode --input app.xlog --output app.log --key <64-hex-private-key>
 ```
 
 `--key` is only required for encrypted async blocks. Plaintext logs can be decoded with:
 
 ```bash
-mars-xlog --input app.xlog --output app.log
+xlog-decoder --input app.xlog --output app.log
 ```
 
-Install options:
+Install from crates.io:
 
 ```bash
-# Cargo install from crates.io (recommended):
 cargo install xlog-decoder --locked
-
-# Homebrew tap/cask install from this repository or a copied tap.
-brew install --cask ./Casks/mars-xlog.rb
-
-# npm installs a small Node wrapper and downloads the release binary.
-npm install -g mars-xlog-cli
 ```
 
-The Homebrew cask and npm package both consume GitHub Release archives named
-`mars-xlog-v<version>-<target>.tar.gz`.
+Optional binary archives produced by `scripts/xlog/package_cli_artifact.sh` are named
+`xlog-decoder-v<version>-<target>.tar.gz`. The old CLI alias and npm/Homebrew wrappers have been retired.
 
 Crates.io publishing is done locally with `cargo publish`. This repository
 does not run a GitHub Actions release workflow.

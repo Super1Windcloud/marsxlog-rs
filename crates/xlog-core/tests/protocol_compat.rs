@@ -113,10 +113,10 @@ fn header_roundtrip_and_mutation() {
 
 #[test]
 fn async_seq_skips_zero() {
-    let gen = SeqGenerator::with_seed(u16::MAX - 1);
-    assert_eq!(gen.next_async(), u16::MAX);
-    assert_eq!(gen.next_async(), 1);
-    assert_eq!(gen.next_async(), 2);
+    let r#gen = SeqGenerator::with_seed(u16::MAX - 1);
+    assert_eq!(r#gen.next_async(), u16::MAX);
+    assert_eq!(r#gen.next_async(), 1);
+    assert_eq!(r#gen.next_async(), 2);
     assert_eq!(SeqGenerator::sync_seq(), 0);
 }
 

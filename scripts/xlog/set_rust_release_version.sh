@@ -74,7 +74,6 @@ manifests=(
   "${repo_root}/crates/xlog-uniffi/Cargo.toml"
   "${repo_root}/crates/xlog-android-jni/Cargo.toml"
   "${repo_root}/crates/mars-xlog-harmony-napi/Cargo.toml"
-  "${repo_root}/crates/xlog-sys/Cargo.toml"
 )
 
 for file in "${manifests[@]}"; do
@@ -87,32 +86,8 @@ replace_dependency_version "${repo_root}/crates/xlog-uniffi/Cargo.toml" "mars-xl
 replace_dependency_version "${repo_root}/crates/xlog-android-jni/Cargo.toml" "mars-xlog"
 replace_dependency_version "${repo_root}/crates/mars-xlog-harmony-napi/Cargo.toml" "mars-xlog"
 
-cargo metadata --no-deps --format-version 1 >/dev/null
-tmp="$(mktemp)"
-awk -v version="$version" '
-  {
-    if ($0 ~ /"version":/) {
-      sub(/"version": "[^"]+"/, "\"version\": \"" version "\"")
-    }
-    print
-  }
-' "${repo_root}/packages/mars-xlog-cli-npm/package.json" > "$tmp"
-mv "$tmp" "${repo_root}/packages/mars-xlog-cli-npm/package.json"
-chmod 0644 "${repo_root}/packages/mars-xlog-cli-npm/package.json"
-
-tmp="$(mktemp)"
-awk -v version="$version" '
-  {
-    if ($0 ~ /^[[:space:]]*version "/) {
-      sub(/version "[^"]+"/, "version \"" version "\"")
-    }
-    print
-  }
-' "${repo_root}/Casks/mars-xlog.rb" > "$tmp"
-mv "$tmp" "${repo_root}/Casks/mars-xlog.rb"
-chmod 0644 "${repo_root}/Casks/mars-xlog.rb"
-
-scripts/xlog/check_rust_release_tag.sh --tag "v${version}" >/dev/null
+cargo metadata --manifest-path "${repo_root}/Cargo.toml" --no-deps --format-version 1 >/dev/null
+"${repo_root}/scripts/xlog/check_rust_release_tag.sh" --tag "v${version}" >/dev/null
 
 cat <<EOF
 set coordinated Rust release version to ${version}

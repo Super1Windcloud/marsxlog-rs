@@ -456,12 +456,12 @@ where
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_last_error_message() -> *mut c_char {
     take_last_error()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_string_free(value: *mut c_char) {
     if value.is_null() {
         return;
@@ -473,7 +473,7 @@ pub extern "C" fn mxl_string_free(value: *mut c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_new(config_json: *const c_char, level: i32) -> *mut LoggerState {
     match (|| -> Result<*mut LoggerState, String> {
         let dto = parse_logger_config(config_json)?;
@@ -505,7 +505,7 @@ pub extern "C" fn mxl_logger_new(config_json: *const c_char, level: i32) -> *mut
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_free(handle: *mut LoggerState) {
     if handle.is_null() {
         return;
@@ -517,7 +517,7 @@ pub extern "C" fn mxl_logger_free(handle: *mut LoggerState) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_set_level(handle: *mut LoggerState, level: i32) -> bool {
     wrap_bool(|| {
         let state = logger_state(handle)?;
@@ -526,7 +526,7 @@ pub extern "C" fn mxl_logger_set_level(handle: *mut LoggerState, level: i32) -> 
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_set_appender_mode(handle: *mut LoggerState, mode: i32) -> bool {
     wrap_bool(|| {
         let state = logger_state(handle)?;
@@ -535,7 +535,7 @@ pub extern "C" fn mxl_logger_set_appender_mode(handle: *mut LoggerState, mode: i
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_set_console_open(handle: *mut LoggerState, open: bool) -> bool {
     wrap_bool(|| {
         let state = logger_state(handle)?;
@@ -544,7 +544,7 @@ pub extern "C" fn mxl_logger_set_console_open(handle: *mut LoggerState, open: bo
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_set_max_file_size(handle: *mut LoggerState, max_bytes: i64) -> bool {
     wrap_bool(|| {
         let state = logger_state(handle)?;
@@ -553,7 +553,7 @@ pub extern "C" fn mxl_logger_set_max_file_size(handle: *mut LoggerState, max_byt
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_set_max_alive_time(
     handle: *mut LoggerState,
     alive_seconds: i64,
@@ -565,7 +565,7 @@ pub extern "C" fn mxl_logger_set_max_alive_time(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_flush(handle: *mut LoggerState, sync: bool) -> bool {
     wrap_bool(|| {
         let state = logger_state(handle)?;
@@ -574,7 +574,7 @@ pub extern "C" fn mxl_logger_flush(handle: *mut LoggerState, sync: bool) -> bool
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_log(
     handle: *mut LoggerState,
     level: i32,
@@ -591,7 +591,7 @@ pub extern "C" fn mxl_logger_log(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_log_with_meta(
     handle: *mut LoggerState,
     level: i32,
@@ -615,7 +615,7 @@ pub extern "C" fn mxl_logger_log_with_meta(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_list_files(handle: *mut LoggerState, limit: u32) -> *mut c_char {
     wrap_ptr(|| {
         let state = logger_state(handle)?;
@@ -624,7 +624,7 @@ pub extern "C" fn mxl_logger_list_files(handle: *mut LoggerState, limit: u32) ->
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_name_prefix(handle: *mut LoggerState) -> *mut c_char {
     wrap_ptr(|| {
         let state = logger_state(handle)?;
@@ -632,7 +632,7 @@ pub extern "C" fn mxl_logger_name_prefix(handle: *mut LoggerState) -> *mut c_cha
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_logger_benchmark(
     handle: *mut LoggerState,
     level: i32,
@@ -648,12 +648,12 @@ pub extern "C" fn mxl_logger_benchmark(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_decode_log_file(path: *const c_char) -> *mut c_char {
     wrap_ptr(|| decode_log_file_impl(&cstr_to_string(path, "path")?))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mxl_metrics_snapshot() -> *mut c_char {
     wrap_ptr(|| Ok(get_metrics_handle()?.render()))
 }

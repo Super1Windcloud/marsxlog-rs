@@ -3,13 +3,13 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Run release preflight checks for mars-xlog-cli.
+Run release preflight checks for xlog-decoder.
 
 Usage:
-  scripts/xlog/check_mars_xlog_cli_release.sh [options]
+  scripts/xlog/check_xlog_decoder_release.sh [options]
 
 Options:
-  --out-dir <dir>           Artifact root (default: artifacts/release/<timestamp>-mars-xlog-cli)
+  --out-dir <dir>           Artifact root (default: artifacts/release/<timestamp>-xlog-decoder)
   --allow-dirty             Allow cargo package/publish dry-run on a dirty worktree
   --skip-tests              Skip cargo test
   --skip-crates-io-check    Skip crates.io visibility check and publish dry-run
@@ -21,7 +21,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 
 timestamp="$(date +"%Y%m%d-%H%M%S")"
-out_dir="${repo_root}/artifacts/release/${timestamp}-mars-xlog-cli"
+out_dir="${repo_root}/artifacts/release/${timestamp}-xlog-decoder"
 allow_dirty=0
 skip_tests=0
 skip_crates_io_check=0
@@ -136,7 +136,6 @@ run_step check cargo check -p "$pkg_name" --locked
 if [[ "$skip_tests" -eq 0 ]]; then
   run_step tests cargo test -p "$pkg_name" --locked
 fi
-run_step npm_pack npm pack --dry-run --json "${repo_root}/packages/mars-xlog-cli-npm/"
 
 if [[ "$skip_crates_io_check" -eq 0 && -n "$cli_core_dep" ]]; then
   run_step core_dependency_in_registry \

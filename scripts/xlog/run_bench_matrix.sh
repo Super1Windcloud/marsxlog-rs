@@ -311,9 +311,8 @@ fi
 for be in "${requested_backends[@]}"; do
   case "$be" in
     rust) ;;
-    cpp) ;;
     *)
-      echo "error: unsupported backend '$be' (allowed: rust, cpp)" >&2
+      echo "error: unsupported backend '$be' (allowed: rust)" >&2
       exit 2
       ;;
   esac
@@ -331,11 +330,6 @@ if [[ "$skip_build" -eq 0 ]]; then
         log "Building ${be}-backend (release)..."
         cargo build --release -p mars-xlog --example bench_backend \
           --no-default-features --features rust-backend 2>&1 | tail -1 | tee -a "$log_file"
-        ;;
-      cpp)
-        log "Building ${be}-backend (release)..."
-        cargo build --release -p mars-xlog-sys --example bench_backend_cpp \
-          2>&1 | tail -1 | tee -a "$log_file"
         ;;
     esac
   done
@@ -430,24 +424,6 @@ while IFS= read -r line || [[ -n "$line" ]]; do
           cmd=(
             cargo run --release -p mars-xlog --example bench_backend
             --no-default-features --features rust-backend --
-            --out-dir "$run_dir"
-            --prefix "${scenario}-${be}"
-            --messages "$messages"
-            --mode "$mode"
-            --compress "$compress"
-            --compress-level "$compress_level"
-            --msg-size "$msg_size"
-            --payload-profile "$payload_profile"
-            --payload-seed "$payload_seed"
-            --threads "$threads"
-            --flush-every "$flush_every"
-            --warmup "$warmup"
-            --max-file-size "$max_file_size"
-          )
-          ;;
-        cpp)
-          cmd=(
-            cargo run --release -p mars-xlog-sys --example bench_backend_cpp --
             --out-dir "$run_dir"
             --prefix "${scenario}-${be}"
             --messages "$messages"

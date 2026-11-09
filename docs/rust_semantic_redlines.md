@@ -132,13 +132,13 @@
 
 1. Rust 在 oneshot recovery 和 cache/log merge 路径上，会在删除 `.mmap3` 或 cache 源文件前先对目标文件执行 `sync_data`
 2. 这关闭了 Rust 自身“目标写入成功但尚未 durable 就删源”的 crash window
-3. vendored Mars C++ 快照当前仍未跟进这一语义升级，本仓库这次也没有修改 `third_party/mars`
+3. 历史 Mars C++ 快照未包含这一语义升级；当前仓库已经退役该快照及其构建链路
 
 因此：
 
 1. 这项问题不再是 Rust 当前实现的语义边界
-2. 但它仍然是与 vendored C++ 快照之间需要诚实说明的实现差异
-3. 如果后续要求双端都满足“删源前目标已 durable”，需要单独推进上游 C++/vendor 同步
+2. 但它仍然是与历史 C++ 快照之间需要诚实说明的实现差异
+3. 当前固定协议与恢复用例只验证本仓库的 Rust 实现，不代表已验证上游 C++ 的行为
 
 ## 8. 当前结论
 

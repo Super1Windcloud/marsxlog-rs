@@ -30,11 +30,11 @@
 
 1. `mars-xlog-core`
 2. `mars-xlog`
+3. `xlog-decoder`（独立解码器）
 
 建议保持 workspace-only：
 
-1. `mars-xlog-sys`
-2. bindings crates
+1. bindings crates
 
 当前 crates.io 发布顺序必须是：
 
