@@ -2743,7 +2743,11 @@ mod tests {
         let recovered = loop {
             let snapshot_dir = root.join(format!("snapshot-{attempt}"));
             fs::create_dir_all(&snapshot_dir).unwrap();
-            fs::copy(live_cache.join("copy.mmap3"), snapshot_dir.join("copy.mmap3")).unwrap();
+            fs::copy(
+                live_cache.join("copy.mmap3"),
+                snapshot_dir.join("copy.mmap3"),
+            )
+            .unwrap();
             let action = crate::Xlog::oneshot_flush(XlogConfig::new(
                 snapshot_dir.to_string_lossy().to_string(),
                 "copy",
@@ -2756,7 +2760,10 @@ mod tests {
                     break text;
                 }
             }
-            assert!(std::time::Instant::now() < deadline, "mmap never held the message");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "mmap never held the message"
+            );
             attempt += 1;
             std::thread::sleep(std::time::Duration::from_millis(20));
         };
