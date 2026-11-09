@@ -1,6 +1,6 @@
 [package]
 name = "xlog-decoder"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 license = "MIT"
 description = "Command-line decoder for Tencent Mars xlog files, log directories, and Feedback diagnostic ZIP archives."
