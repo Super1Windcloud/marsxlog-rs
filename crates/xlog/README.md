@@ -43,8 +43,7 @@ fn main() -> anyhow::Result<()> {
 ## Scope
 
 This crate is the release-facing Rust surface.
-Legacy C++ parity and benchmark support stay in the repository, but are not part
-of the intended default Rust integration path.
+The legacy C++ FFI toolchain has been retired. Benchmarks stay in the repository, but are not part of the intended default Rust integration path.
 
 ## Notes
 

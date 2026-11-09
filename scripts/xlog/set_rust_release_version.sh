@@ -81,7 +81,6 @@ for file in "${manifests[@]}"; do
 done
 
 replace_dependency_version "${repo_root}/crates/xlog/Cargo.toml" "mars-xlog-core"
-replace_dependency_version "${repo_root}/crates/xlog-cli/Cargo.toml" "mars-xlog-core"
 replace_dependency_version "${repo_root}/crates/xlog-uniffi/Cargo.toml" "mars-xlog"
 replace_dependency_version "${repo_root}/crates/xlog-android-jni/Cargo.toml" "mars-xlog"
 replace_dependency_version "${repo_root}/crates/mars-xlog-harmony-napi/Cargo.toml" "mars-xlog"

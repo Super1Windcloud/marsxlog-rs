@@ -12,7 +12,7 @@ Options:
   --out-dir <dir>     Output root directory (default: artifacts/xlog-fixtures/<timestamp>)
   --backend <value>   rust (default: rust)
   --count <n>         Number of emitted records per case (default: 16)
-  --include-crypt     Also generate crypt cases (requires decoder env with py2 + pyelliptic)
+  --include-crypt     Also generate crypt cases with the built-in Rust public key
   -h, --help          Show this help text
 EOF
 }

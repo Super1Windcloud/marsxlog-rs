@@ -28,7 +28,7 @@
 3. async public write path 仍明显重于 sync
 4. `core_compress_decode/zstd_*` 高噪声，只能作诊断信号
 
-完整 runner、矩阵与回归治理见 [benchmark_strategy.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/benchmark_strategy.md)。
+完整 runner、矩阵与回归治理见 [benchmark_strategy.md](benchmark_strategy.md)。
 
 ## 3. 正确性状态
 
@@ -37,7 +37,7 @@
 1. `FileManager` 单写者约束已经通过 `log_dir/cache_dir` 锁、README 和回归测试显式化
 2. recovery / oneshot 的 recovered block 必须保持连续写出，不能退回 split-write
 
-更完整的语义约束见 [rust_semantic_redlines.md](/Users/fannnzhang/.codex/worktrees/6bdf/xlog-rs/docs/rust_semantic_redlines.md)。
+更完整的语义约束见 [rust_semantic_redlines.md](rust_semantic_redlines.md)。
 
 ## 4. 当前真正值得做的事情
 

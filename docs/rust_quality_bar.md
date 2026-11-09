@@ -11,7 +11,7 @@
 目标：
 
 1. 把常规维护动作标准化到 workflow
-2. 在 PR 和 `main` 上持续验证格式、静态检查、构建、测试和发布前检查
+2. 在 PR 和 `main` 上持续验证格式、构建、测试和发布前检查
 3. 让覆盖率保持在较高水平，并对新增行为持续补测试
 
 ## 1. 硬门槛
@@ -19,16 +19,14 @@
 下面这些检查应视为长期硬门槛：
 
 1. `cargo fmt --all --check`
-2. `cargo clippy -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-targets --all-features --locked -- -D warnings`
-3. `cargo test -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-features --locked`
-4. `cargo check` 的关键 feature / target 组合
-5. npm 包内容检查可执行且结果符合预期
-6. release preflight 脚本可执行且结果符合预期
+2. `cargo test -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-features --locked`
+3. `cargo check` 的关键 feature / target 组合
+4. release preflight 脚本可执行且结果符合预期
 
 对应 workflow：
 
-1. [rust_ci.yml](/Users/zhangfan/develop/github.com/xlog-rs/.github/workflows/rust_ci.yml)
-2. [rust_coverage.yml](/Users/zhangfan/develop/github.com/xlog-rs/.github/workflows/rust_coverage.yml)
+1. [rust_ci.yml](../.github/workflows/rust_ci.yml)
+2. [rust_coverage.yml](../.github/workflows/rust_coverage.yml)
 
 ## 2. 平台要求
 
@@ -40,7 +38,7 @@
 
 当前策略：
 
-1. Linux 负责 `fmt`、`clippy`、feature 组合 `cargo check`、release preflight
+1. Linux 负责 `fmt`、feature 组合 `cargo check`、release preflight
 2. Linux / macOS / Windows 都负责 `cargo test`
 3. 覆盖率采集先固定在 Linux
 

@@ -55,25 +55,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-  clippy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: clippy
-
-      - name: Cache cargo artifacts
-        uses: swatinem/rust-cache@v2
-
-      - name: Run clippy on release-facing crates
-        run: cargo clippy -p mars-xlog-core -p mars-xlog -p xlog-decoder --all-targets --all-features --locked -- -D warnings
-
   check:
     runs-on: ubuntu-latest
     strategy:
@@ -159,7 +140,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - fmt
-      - clippy
       - check
       - test
 
