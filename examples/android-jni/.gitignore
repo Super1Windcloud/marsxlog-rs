@@ -4,3 +4,4 @@ build/
 .kotlin/
 target/
 local.properties
+app/src/main/jniLibs/
