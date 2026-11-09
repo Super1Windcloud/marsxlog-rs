@@ -2706,4 +2706,78 @@ mod tests {
             .async_frontend
             .recycle_line_buffer(super::ASYNC_LINE_POOL_SHARDS, String::new());
     }
+
+    /// Android feedback export copies a live process's mmap3 and drains the
+    /// copy, so pending logs are exported without touching the live instance.
+    #[test]
+    fn oneshot_recovers_pending_buffer_from_copied_mmap() {
+        let root = std::env::temp_dir().join(format!(
+            "xlog-rust-backend-mmap-copy-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let live_dir = root.join("live");
+        let live_cache = root.join("live_cache");
+        fs::create_dir_all(&live_dir).unwrap();
+        fs::create_dir_all(&live_cache).unwrap();
+
+        let cfg = XlogConfig::new(live_dir.to_string_lossy().to_string(), "copy")
+            .cache_dir(live_cache.to_string_lossy().to_string())
+            .mode(AppenderMode::Async);
+        let backend = RustBackend::new(cfg, LogLevel::Info).unwrap();
+        let pending = "pending-before-copy";
+        backend.write_with_meta(
+            LogLevel::Info,
+            "demo",
+            "main.rs",
+            "f",
+            1,
+            pending,
+            RawLogMeta::default(),
+        );
+
+        // The async frontend fills the mmap on its own thread; retry until the
+        // copied buffer contains the message.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut attempt = 0;
+        let recovered = loop {
+            let snapshot_dir = root.join(format!("snapshot-{attempt}"));
+            fs::create_dir_all(&snapshot_dir).unwrap();
+            fs::copy(live_cache.join("copy.mmap3"), snapshot_dir.join("copy.mmap3")).unwrap();
+            let action = crate::Xlog::oneshot_flush(XlogConfig::new(
+                snapshot_dir.to_string_lossy().to_string(),
+                "copy",
+            ))
+            .unwrap();
+            if action == crate::FileIoAction::Success {
+                let text = collect_decoded_text(&snapshot_dir);
+                if text.contains(pending) {
+                    assert!(!snapshot_dir.join("copy.mmap3").exists());
+                    break text;
+                }
+            }
+            assert!(std::time::Instant::now() < deadline, "mmap never held the message");
+            attempt += 1;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(recovered.contains(pending));
+        assert!(!collect_decoded_text(&live_dir).contains(pending));
+        assert!(live_cache.join("copy.mmap3").exists());
+
+        let after = "written-after-copy";
+        backend.write_with_meta(
+            LogLevel::Info,
+            "demo",
+            "main.rs",
+            "f",
+            2,
+            after,
+            RawLogMeta::default(),
+        );
+        backend.flush(true);
+        let live_text = collect_decoded_text(&live_dir);
+        assert!(live_text.contains(pending));
+        assert!(live_text.contains(after));
+        let _ = fs::remove_dir_all(&root);
+    }
 }
